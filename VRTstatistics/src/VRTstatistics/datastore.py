@@ -309,6 +309,24 @@ class DataStore:
             raise DataStoreError(f"missing {descr}. No record found for predicate: {predicate}.")
         return rv
 
+    def roles(self) -> List[str]:
+        """
+        Return the roles that took part in this session.
+
+        Taken from the session metadata (in session order) when present. Otherwise
+        derived from the ``role`` fields of the records (sorted), for data that has
+        no session metadata, such as bare-list JSON files.
+
+        :raises DataStoreError: if no roles can be found at all (e.g. a raw stats.log).
+        """
+        roles = self.session_metadata.get("roles")
+        if roles:
+            return list(roles)
+        roles = sorted({r["role"] for r in self.data if r.get("role")})
+        if not roles:
+            raise DataStoreError(f"{self.filename}: no roles found in session metadata or records")
+        return roles
+
     def describe(self) -> str:
         """Return a short human-readable description of this session and its annotations."""
         from .annotation import describe as _describe

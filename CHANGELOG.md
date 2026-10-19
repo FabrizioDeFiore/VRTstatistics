@@ -7,6 +7,10 @@ fixes and improvements within a VR2Gather release cycle. Versions are derived fr
 git tags (see `FILEVERSION` / `OLDEST_COMPATIBLE_VERSION` in `datastore.py` for the
 combined.json format version scheme).
 
+## [unreleased]
+
+- `DataStore.roles()`: the session's roles, from session metadata or (failing that) the records; raises if there are none (#39)
+
 ## [1.4.1] — 2026-07-07
 
 - `VRTstatistics-ingest` gains `--module MODULE` (previously only on `VRTstatistics-annotate`), so ingest-time annotation steps defined outside VRTstatistics can register themselves in one step: `VRTstatistics-ingest -a <name> --module <module>`
