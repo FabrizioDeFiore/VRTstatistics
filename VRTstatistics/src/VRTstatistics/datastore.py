@@ -342,6 +342,18 @@ class DataStore:
             raise DataStoreError(f"{self.filename}: expected exactly one master role, found {sorted(masters)}")
         return masters.pop()
 
+    def orchtime_to_sessiontime(self, orchtime: float) -> float:
+        """
+        Convert an orchestrator-clock time to session time, for timestamps that
+        a record carries in a field of its own. Both are in seconds.
+
+        :raises DataStoreError: if the session start time is not known.
+        """
+        session_start_time = self.session_metadata.get("session_start_time")
+        if not session_start_time:
+            raise DataStoreError(f"{self.filename}: no session start time in session metadata")
+        return orchtime - session_start_time
+
     def describe(self) -> str:
         """Return a short human-readable description of this session and its annotations."""
         from .annotation import describe as _describe
