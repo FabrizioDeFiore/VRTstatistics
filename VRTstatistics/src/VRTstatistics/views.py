@@ -1,6 +1,6 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
-from typing import Any, Callable, ClassVar, Dict, Optional, Type
+from typing import Any, Callable, ClassVar, Dict, List, Optional, Type
 import pandas as pd
 
 from .datastore import DataStore, DataStoreError
@@ -36,10 +36,19 @@ class View:
     # kw_only so that subclasses can declare fields without defaults.
     scenes: Optional[pd.DataFrame] = field(default=None, kw_only=True)
 
-    def __init_subclass__(cls, **kwargs: Any) -> None:
+    def __init_subclass__(cls, replace: bool = False, **kwargs: Any) -> None:
+        """Register a View type under its name. Taking over a name from another type needs replace=True."""
         super().__init_subclass__(**kwargs)
-        if cls.name:
-            View._registry[cls.name] = cls
+        if not cls.__dict__.get("name"):
+            return
+        existing = View._registry.get(cls.name)
+        # The same class being defined again is a notebook cell being re-run or a module being reloaded.
+        if existing and not replace and (existing.__module__, existing.__qualname__) != (cls.__module__, cls.__qualname__):
+            raise DataStoreError(
+                f"View name {cls.name!r} is already used by {existing.__module__}.{existing.__qualname__}. "
+                f"To replace it in {cls.__module__}.{cls.__qualname__}, declare the class with replace=True."
+            )
+        View._registry[cls.name] = cls
 
     @classmethod
     def find(cls, name: str) -> Optional[Type[View]]:
@@ -336,6 +345,68 @@ def extract_progress(ds: DataStore) -> ProgressView:
     return ProgressView(description=ds.describe(), scenes=ds.scenes(), progress=df)
 
 
+@dataclass
+class VoiceView(View):
+    """Voice activity: per-role voice level over session time."""
+    name: ClassVar[str] = "voice-activity"
+    default_filename: ClassVar[str] = "voice-activity.pdf"
+    voice_levels: pd.DataFrame  # sessiontime + one column per role (role.level)
+    labels: Dict[str, str]
+    role_colors: Dict[str, str]
+
+
+def extract_voice(ds: DataStore, *, label_source: str = "role") -> VoiceView:
+    """Extract voice levels from AsyncVoiceReader records. See DataStore.role_labels() for label_source."""
+    voice_levels = ds.get_dataframe(
+        predicate='component == "AsyncVoiceReader" and "level" in record',
+        fields=['sessiontime', 'role.=level'],
+    )
+    return VoiceView(
+        description=ds.describe(), scenes=ds.scenes(),
+        voice_levels=voice_levels,
+        labels=ds.role_labels(source=label_source),
+        role_colors={role: ds.role_color(role) for role in ds.roles()},
+    )
+
+
+@dataclass
+class GazeView(View):
+    """Gaze timeline: which GazeTarget each role is looking at over session time."""
+    name: ClassVar[str] = "gaze"
+    default_filename: ClassVar[str] = "gaze.pdf"
+    segments: pd.DataFrame  # role, target, t_start, t_end
+    roles: List[str]
+    labels: Dict[str, str]
+    role_colors: Dict[str, str]
+
+
+def extract_gaze(ds: DataStore, *, label_source: str = "role") -> GazeView:
+    """Extract gaze segments from GazeTarget records. See DataStore.role_labels() for label_source."""
+    try:
+        gaze_records = ds.find_all_records('component == "GazeTarget"', "gaze events")
+    except DataStoreError:
+        gaze_records = []
+
+    # Pair gazing=1 / gazing=0 events into segments.
+    # Ignore initial gazing=0 emitted by GazeTarget.Start() (no open segment to close).
+    open_segs: Dict[Any, float] = {}
+    rows = []
+    for r in sorted(gaze_records, key=lambda r: r['sessiontime']):
+        key = (r['role'], r.get('target', ''))
+        if r.get('gazing') == 1:
+            open_segs[key] = r['sessiontime']
+        elif r.get('gazing') == 0 and key in open_segs:
+            rows.append({'role': key[0], 'target': key[1], 't_start': open_segs.pop(key), 't_end': r['sessiontime']})
+
+    return GazeView(
+        description=ds.describe(), scenes=ds.scenes(),
+        segments=pd.DataFrame(rows, columns=['role', 'target', 't_start', 't_end']),
+        roles=ds.roles(),
+        labels=ds.role_labels(source=label_source),
+        role_colors={role: ds.role_color(role) for role in ds.roles()},
+    )
+
+
 # ── Register extractors ────────────────────────────────────────────────────────
 
 LatencyView.register_extractor(extract_latencies)
@@ -344,3 +415,5 @@ ResourceView.register_extractor(extract_resources)
 FramerateView.register_extractor(extract_framerates)
 PointcountView.register_extractor(extract_pointcounts)
 ProgressView.register_extractor(extract_progress)
+VoiceView.register_extractor(extract_voice)
+GazeView.register_extractor(extract_gaze)

@@ -58,10 +58,17 @@ class AnnotationEngine:
         self._registry: Dict[str, Type[AnnotationStep]] = {}
         self._aliases: Dict[str, str] = {}
 
-    def register(self, step_class: Type[AnnotationStep]) -> None:
-        """Register an AnnotationStep class by its name."""
+    def register(self, step_class: Type[AnnotationStep], replace: bool = False) -> None:
+        """Register an AnnotationStep class by its name. Taking over a name from another class needs replace=True."""
         if not step_class.name:
             raise ValueError(f"AnnotationStep class {step_class} has no name")
+        existing = self._registry.get(step_class.name)
+        # The same class being defined again is a notebook cell being re-run or a module being reloaded.
+        if existing and not replace and (existing.__module__, existing.__qualname__) != (step_class.__module__, step_class.__qualname__):
+            raise DataStoreError(
+                f"Annotation name {step_class.name!r} is already used by {existing.__module__}.{existing.__qualname__}. "
+                f"To replace it, register {step_class.__module__}.{step_class.__qualname__} with replace=True."
+            )
         self._registry[step_class.name] = step_class
 
     def register_alias(self, alias: str, name: str) -> None:

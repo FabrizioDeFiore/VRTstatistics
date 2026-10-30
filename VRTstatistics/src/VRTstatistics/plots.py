@@ -5,6 +5,7 @@ from typing import Callable, Tuple, Optional, List, Dict, Any, cast, Literal
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 import matplotlib.colors as mcolors
+import matplotlib.patches as mpatches
 import pandas as pd
 import matplotlib.pyplot as pyplot
 from matplotlib.backends.backend_pdf import PdfPages
@@ -13,9 +14,10 @@ from .datastore import DataStore, DataStoreError, Predicate
 from .analyze import DataFrameFilter, TileCombiner, SessionTimeFilter
 from .annotation import engine
 from .views import (
-    LatencyView, LatencyPerTileView, ResourceView, FramerateView, PointcountView, ProgressView,
+    LatencyView, LatencyPerTileView, ResourceView, FramerateView, PointcountView, ProgressView, VoiceView, GazeView,
     extract_latencies, extract_latencies_per_tile, extract_resources,
     extract_framerates, extract_pointcounts, extract_progress,
+    extract_voice, extract_gaze,
 )
 
 
@@ -535,9 +537,68 @@ def plot_progress(ds: DataStore, dirname: Optional[str]=None, showplot: bool=Tru
 
 # ── Register renderers ─────────────────────────────────────────────────────────
 
+def render_voice(view: VoiceView, *, title: str="Voice activity", style: PlotStyle=PlotStyle()) -> List[Axes]:
+    """Render voice levels per role from a VoiceView."""
+    figsize = style.figsize or (14, 4)
+    fig, ax = pyplot.subplots(figsize=figsize)
+
+    apply_scene_shading(ax, view.scenes)
+
+    level_cols = [c for c in view.voice_levels.columns if c != 'sessiontime']
+    for col in level_cols:
+        role = col.removesuffix('.level')
+        sub = view.voice_levels[['sessiontime', col]].dropna()
+        ax.plot(sub['sessiontime'], sub[col],
+                color=view.role_colors[role], linewidth=0.8, label=view.labels[role])
+
+    ax.set_xlabel("Session time (s)")
+    ax.set_ylabel("Voice level")
+    ax.set_ylim(0, 1)
+    ax.set_title(f"{title} — {view.description}")
+    if len(level_cols) > 1:
+        ax.legend()
+    return [ax]
+
+
+def render_gaze(view: GazeView, *, title: str="Gaze activity", style: PlotStyle=PlotStyle()) -> List[Axes]:
+    """Render a timeline of gaze segments per target from a GazeView."""
+    all_targets = sorted(view.segments['target'].unique()) if not view.segments.empty else []
+    target_idx = {t: i for i, t in enumerate(all_targets)}
+    n_targets = len(all_targets)
+    n_roles = len(view.roles)
+
+    bar_height = 0.8 / max(n_roles, 1)
+    offsets = [i * bar_height - (n_roles - 1) * bar_height / 2 for i in range(n_roles)]
+
+    figsize = style.figsize or (14, max(3, n_targets * 0.6 + 1))
+    fig, ax = pyplot.subplots(figsize=figsize)
+
+    apply_scene_shading(ax, view.scenes)
+
+    for _, seg in view.segments.iterrows():
+        y = target_idx[seg['target']] + offsets[view.roles.index(seg['role'])]
+        ax.barh(y, seg['t_end'] - seg['t_start'], left=seg['t_start'],
+                height=bar_height * 0.85,
+                color=view.role_colors[seg['role']], align='center', zorder=2)
+
+    ax.set_yticks(range(n_targets))
+    ax.set_yticklabels([t.replace('GazeTarget_', '') for t in all_targets], fontsize=8)
+    ax.set_xlabel("Session time (s)")
+    ax.set_ylim(-0.5, n_targets - 0.5)
+    ax.set_title(f"{title} — {view.description}")
+
+    if n_roles > 1:
+        legend_patches = [mpatches.Patch(color=view.role_colors[r], label=view.labels[r]) for r in view.roles]
+        ax.legend(handles=legend_patches, loc='lower right')
+
+    return [ax]
+
+
 LatencyView.register_renderer(render_latencies)
 LatencyPerTileView.register_renderer(render_latencies_per_tile)
 ResourceView.register_renderer(render_resources)
 FramerateView.register_renderer(render_framerates_and_dropped)
 PointcountView.register_renderer(render_pointcounts)
 ProgressView.register_renderer(render_progress)
+VoiceView.register_renderer(render_voice)
+GazeView.register_renderer(render_gaze)

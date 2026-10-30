@@ -19,6 +19,8 @@ combined.json format version scheme).
 - `VRTstatistics.checks`: common checks for per-experiment checker scripts (clock desync, start times, session end, referenced files, required records, scenes) (#39)
 - Scenes as part of the session: `DataStore.scenes()`, `scene_predicate()`, a `scenes` field on `View`, background shading in all standard plots (#32)
 - `DataStore.role_labels(source)` and `role_color(role)`: labels chosen by the experiment, and a fixed colour per role across views (#35)
+- Registering a `View` or annotation step under a name another class already uses is now an error, unless declared with `replace=True` (#39)
+- Generic views `voice-activity` and `gaze`, from TrolleyExperiment (#39)
 
 ## [1.4.1] — 2026-07-07
 
