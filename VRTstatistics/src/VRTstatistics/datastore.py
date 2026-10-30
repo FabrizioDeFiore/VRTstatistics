@@ -1,4 +1,6 @@
 from __future__ import annotations
+import ntpath
+import os
 import sys
 import json
 from typing import Optional, List, Any, cast, Dict, Union
@@ -353,6 +355,28 @@ class DataStore:
         if not session_start_time:
             raise DataStoreError(f"{self.filename}: no session start time in session metadata")
         return orchtime - session_start_time
+
+    def resolve_file(self, record: DataStoreRecord, field: str) -> str:
+        """
+        Return the local path of a file that a stats record refers to, such as a
+        voice recording. VRTrun collects these into ``<run>/<role>/``, next to
+        ``stats.log``. The record has the name the file had on the machine that
+        wrote it, possibly a full path with Windows separators, so only the last
+        part of it is used.
+
+        :param record: The record, which must have a ``role``.
+        :param field: The field of the record that holds the filename.
+        :raises DataStoreError: if the record or this DataStore lacks what is needed, or the file doesn't exist.
+        """
+        if not self.filename or self.filename == "-":
+            raise DataStoreError(f"Can't resolve {field}: this DataStore wasn't loaded from a file")
+        if field not in record or "role" not in record:
+            raise DataStoreError(f"{self.filename}: can't resolve {field}: record lacks {field} or role: {record}")
+        run_dir = os.path.dirname(os.path.abspath(self.filename))
+        path = os.path.join(run_dir, record["role"], ntpath.basename(record[field]))
+        if not os.path.exists(path):
+            raise DataStoreError(f"{self.filename}: file referred to by {field} not found: {path}")
+        return path
 
     def describe(self) -> str:
         """Return a short human-readable description of this session and its annotations."""

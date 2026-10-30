@@ -14,6 +14,7 @@ combined.json format version scheme).
 - `DataStore.orchtime_to_sessiontime()`: convert orchestrator-clock timestamps in record fields to session time (#39)
 - Several instances of an annotation (`latency`), each stored under its full name `name(key=value,...)`; `engine.ensure()` returns the metadata, and raises where it used to silently do nothing or the short name is ambiguous (#34)
 - Renamed `latency` annotation to `media_path` and `latencies` views to `latency-contributions`; the old names still work (#43)
+- `DataStore.resolve_file()`: local path of a file that a stats record refers to, raises if it's missing (#41)
 
 ## [1.4.1] — 2026-07-07
 
