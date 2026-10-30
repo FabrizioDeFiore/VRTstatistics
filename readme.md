@@ -68,7 +68,7 @@ This is what the `prerecorded` variant in the VR2Gather `RepresentationPointclou
 
 **Plotting:** Three levels of use, from quick to fully customised:
 
-- **Quick look** — `VRTstatistics-plot --type latency-contributions run-dir/combined.json` produces a standard plot interactively. Run `VRTstatistics-plot --list-types` to see all available types. Annotation is applied automatically if needed.
+- **Quick look** — `VRTstatistics-plot --type latency-contributions -d run-dir/combined.json` produces a standard plot interactively. Repeat `--type` for several plots, and add `--save-dir DIR` to save them under their default filenames. Run `VRTstatistics-plot --list-types` to see all available types. Annotation is applied automatically if needed.
 
 - **Experiment script** — the preferred approach for production output. Create a `create_plots.py` in your experiment directory using the extract / render / publish pipeline:
 
@@ -89,9 +89,7 @@ This is what the `prerecorded` variant in the VR2Gather `RepresentationPointclou
 
 - **Custom plot types** — define a `View` subclass with `name`, `default_filename`, and a docstring, plus standalone `extract_*` and `render_*` functions, then call `MyView.register_extractor(...)` and `MyView.register_renderer(...)`. After `import my_module` the new type appears in `--list-types` and is usable via `view_cls.extract(ds).render()`. See issue #31 for planned examples.
 
-  > TODO: this whole area (annotation steps, `--module`/`--import`, the View registry) needs a proper documentation pass. The emerging pattern for a per-experiment analysis module: define a `vrts_<experiment>.py` at the root of the experiment's own repo, with custom `View` subclasses (as above) *and* `AnnotationStep` subclasses (see `annotation.py`) registered with the shared `engine`. Apply with `VRTstatistics-ingest -a <name> --module vrts_<experiment>` (`VRTstatistics-annotate` has the same `--module`). Both search upward from the current directory if the module isn't otherwise importable, so this works from a session subdirectory with no packaging/install step. Working example: `TrolleyExperiment`'s `vrts_trolley.py` (`TrolleyAnnotation` + `VoiceView`/`GazeView`/`PositionView`).
-  >
-  > Inconsistency to reconcile: `VRTstatistics-plot` uses a differently-named `--import MODULE` for the same purpose, and it's a plain `importlib.import_module` with no upward-search fallback — should probably become `--module` with the same behavior as the other two, for one consistent story across all three CLIs.
+  > TODO: this whole area (annotation steps, `--module`, the View registry) needs a proper documentation pass. The emerging pattern for a per-experiment analysis module: define a `vrts_<experiment>.py` at the root of the experiment's own repo, with custom `View` subclasses (as above) *and* `AnnotationStep` subclasses (see `annotation.py`) registered with the shared `engine`. Apply with `VRTstatistics-ingest -a <name> --module vrts_<experiment>` (`VRTstatistics-annotate` has the same `--module`). Both search upward from the current directory if the module isn't otherwise importable, so this works from a session subdirectory with no packaging/install step. Working example: `TrolleyExperiment`'s `vrts_trolley.py` (`TrolleyAnnotation` + `VoiceView`/`GazeView`/`PositionView`).
 
 ## Preparing the VR2Gather experience to run
 
@@ -159,7 +157,7 @@ See [testing.md](testing.md) for a full end-to-end walkthrough including ingesti
 
 Quick summary: after a run, use `VRTstatistics-ingest -a media_path` (or `--norun <dir>` to re-ingest an existing run). Results land in `run-YYYYMMDD-HHMM/combined.json`.
 
-For a quick interactive plot: `VRTstatistics-plot --type latency-contributions run-YYYYMMDD-HHMM/combined.json`
+For a quick interactive plot: `VRTstatistics-plot --type latency-contributions -d run-YYYYMMDD-HHMM/combined.json`
 
 For exploratory analysis in Jupyter:
 

@@ -1,22 +1,24 @@
 import argparse
-import importlib
 import sys
 import os
 import matplotlib.pyplot as pyplot
 from importlib.metadata import version as _pkg_version
-from ..datastore import DataStore
+from ..datastore import DataStore, DataStoreError
 from ..views import View
 from ..plots import plot_simple, PlotStyle, publish_plots
+from ._modimport import import_external_module
 
 def main():
     parser = argparse.ArgumentParser(description="Plot datastore file")
     parser.add_argument("--version", action="version", version=f"%(prog)s {_pkg_version('VRTstatistics')}")
-    parser.add_argument("--import", dest="imports", metavar="MODULE", action="append", default=[],
-                        help="Import MODULE before running (use to register external plot types)")
+    parser.add_argument("--module", "--import", dest="modules", metavar="MODULE", action="append", default=[],
+                        help="Import MODULE before running (allows external plot types to register themselves). If MODULE isn't importable as-is, searches upward from the current directory for a matching MODULE.py or MODULE/ package.")
     parser.add_argument("--list-types", action="store_true",
                         help="List available standard plot types and exit")
-    parser.add_argument("--type", metavar="TYPE",
-                        help="Produce a standard plot of the given type (see --list-types)")
+    parser.add_argument("--type", dest="types", metavar="TYPE", action="append", default=[],
+                        help="Produce a standard plot of the given type (see --list-types). Repeat for several plots.")
+    parser.add_argument("--save-dir", metavar="DIR", default=None,
+                        help="With --type: save each plot in DIR under its default filename, instead of showing it")
     parser.add_argument("-d", "--datastore", metavar="FILE",
                         help="DataStore file to plot")
     parser.add_argument(
@@ -47,8 +49,8 @@ def main():
         sys.stderr.flush()
         sys.stdin.readline()
 
-    for mod in args.imports:
-        importlib.import_module(mod)
+    for mod in args.modules:
+        import_external_module(mod)
 
     if args.list_types:
         print("Available plot types:")
@@ -57,26 +59,45 @@ def main():
             print(f"  {name:20s}  {doc}")
         return
 
-    if args.type:
+    if args.types:
         if not args.datastore:
             parser.error("--type requires --datastore")
-        view_cls = View.find(args.type)
-        if view_cls is None:
-            parser.error(f"Unknown type {args.type!r}. Use --list-types to see available types.")
+        if args.output and args.save_dir:
+            parser.error("--output and --save-dir can't be combined")
+        if args.output and len(args.types) > 1:
+            parser.error("--output needs a single --type; use --save-dir for several")
+        view_classes = {}
+        for name in args.types:
+            view_cls = View.find(name)
+            if view_cls is None:
+                parser.error(f"Unknown type {name!r}. Use --list-types to see available types.")
+            if args.save_dir and not view_cls.default_filename:
+                parser.error(f"Type {name!r} has no default filename, so can't be used with --save-dir")
+            view_classes[name] = view_cls
         ds = DataStore(args.datastore)
         ds.load()
-        view = view_cls.extract(ds)
         kwargs: dict = {'style': PlotStyle()}
         if args.title:
             kwargs['title'] = args.title
-        axes = view.render(**kwargs)
-        if args.output:
-            dirname = os.path.dirname(os.path.abspath(args.output))
-            file_name = os.path.basename(args.output)
-            publish_plots(axes, showplot=False, saveplot=True, dirname=dirname, file_name=file_name)
-        else:
-            publish_plots(axes, showplot=True, saveplot=False)
-        return
+        failed = False
+        for name, view_cls in view_classes.items():
+            try:
+                axes = view_cls.extract(ds).render(**kwargs)
+            except DataStoreError as e:
+                print(f"{parser.prog}: {name}: {e}", file=sys.stderr)
+                failed = True
+                continue
+            if args.save_dir:
+                publish_plots(axes, showplot=False, saveplot=True, dirname=args.save_dir, file_name=view_cls.default_filename)
+                print(f"Saved {os.path.join(args.save_dir, view_cls.default_filename)}")
+                pyplot.close('all')
+            elif args.output:
+                dirname = os.path.dirname(os.path.abspath(args.output))
+                file_name = os.path.basename(args.output)
+                publish_plots(axes, showplot=False, saveplot=True, dirname=dirname, file_name=file_name)
+        if not args.save_dir and not args.output:
+            pyplot.show()
+        sys.exit(1 if failed else 0)
 
     # Ad-hoc mode: plot_simple with predicate and field selection
     if not args.datastore:

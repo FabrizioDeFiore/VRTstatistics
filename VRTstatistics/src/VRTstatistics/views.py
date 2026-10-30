@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, ClassVar, Dict, Optional, Type
 import pandas as pd
 
-from .datastore import DataStore
+from .datastore import DataStore, DataStoreError
 from .annotation import engine
 from .analyze import TileCombiner, SessionTimeFilter
 
@@ -209,7 +209,8 @@ def extract_latencies_per_tile(ds: DataStore) -> LatencyPerTileView:
     sender = media_path["sender"]
     receiver = media_path["receiver"]
     nTiles = media_path.get("nTiles", 1)
-    assert nTiles > 1
+    if nTiles <= 1:
+        raise DataStoreError(f"per-tile latency contributions need more than one tile, this session has {nTiles}")
     per_tile = ds.get_dataframe(
         predicate=f'".pc." in component_role or component_role == "{receiver}.voice.renderer" or component_role == "{receiver}.synchronizer"',
         fields=[
