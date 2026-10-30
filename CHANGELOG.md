@@ -10,6 +10,7 @@ combined.json format version scheme).
 ## [unreleased]
 
 - `DataStore.roles()`: the session's roles, from session metadata or (failing that) the records; raises if there are none (#39)
+- `DataStore.master_role()`: the role that created the orchestrator session (#39)
 
 ## [1.4.1] — 2026-07-07
 

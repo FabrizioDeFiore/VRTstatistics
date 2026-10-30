@@ -327,6 +327,21 @@ class DataStore:
             raise DataStoreError(f"{self.filename}: no roles found in session metadata or records")
         return roles
 
+    def master_role(self) -> str:
+        """
+        Return the role that created the orchestrator session, from its
+        ``OrchestratorController`` record with ``isMaster=1``.
+
+        :raises DataStoreError: if there is no such record, or if more than one role claims to be master.
+        """
+        masters = {
+            r["role"] for r in self.data
+            if r.get("component") == "OrchestratorController" and r.get("isMaster") and r.get("role")
+        }
+        if len(masters) != 1:
+            raise DataStoreError(f"{self.filename}: expected exactly one master role, found {sorted(masters)}")
+        return masters.pop()
+
     def describe(self) -> str:
         """Return a short human-readable description of this session and its annotations."""
         from .annotation import describe as _describe
