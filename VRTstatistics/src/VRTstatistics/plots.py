@@ -1,7 +1,7 @@
 import os
 import warnings
 from dataclasses import dataclass, field
-from typing import Tuple, Optional, List, Dict, Any, cast, Literal
+from typing import Callable, Tuple, Optional, List, Dict, Any, cast, Literal
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 import matplotlib.colors as mcolors
@@ -44,6 +44,31 @@ __all__ = [
     "render_pointcounts", "render_progress",
     "publish_plots", "extract_legend",
 ]
+
+
+_SCENE_SHADES = ['#f0f0f0', '#ffffff']
+
+
+def apply_scene_shading(ax: Axes, scenes: Optional[pd.DataFrame], labels: Optional[Callable[[str], str]] = None) -> None:
+    """
+    Add alternating background shading and scene names to an axes whose x axis is session time.
+
+    :param scenes: A table from DataStore.scenes(). Nothing happens if it is None or empty.
+    :param labels: Optionally, a function from scene name to the label to show.
+    """
+    if scenes is None:
+        return
+    shade_idx = 0
+    for _, row in scenes.iterrows():
+        if pd.isna(row['t_end']):
+            continue
+        ax.axvspan(row['t_start'], row['t_end'], color=_SCENE_SHADES[shade_idx % 2], zorder=0)
+        shade_idx += 1
+        ax.text(
+            (row['t_start'] + row['t_end']) / 2, 0.98, labels(row['name']) if labels else row['name'],
+            ha='center', va='top', fontsize=7, color='#888888',
+            transform=ax.get_xaxis_transform(),
+        )
 
 
 def plot_simple(datastore: DataStore, *, predicate: Optional[Predicate]=None, title: Optional[str]=None, noshow: bool=False, x: str="sessiontime", fields: List[str]=[], datafilter: Optional[DataFrameFilter]=None, plotargs: Dict[str, Any]={}, show_desc: bool=True) -> Axes:
@@ -233,6 +258,7 @@ def render_resource_cpu(view: ResourceView, *, title: str="CPU usage", style: Pl
     _, top = ax.get_ylim()
     ax.set_ylim(0, top * 1.5)
     _apply_style(ax, style)
+    apply_scene_shading(ax, view.scenes)
     return [ax]
 
 
@@ -244,6 +270,7 @@ def render_resource_mem(view: ResourceView, *, title: str="Memory usage", style:
     _, top = ax.get_ylim()
     ax.set_ylim(0, top * 1.5)
     _apply_style(ax, style)
+    apply_scene_shading(ax, view.scenes)
     return [ax]
 
 
@@ -255,6 +282,7 @@ def render_resource_bandwidth(view: ResourceView, *, title: str="Bandwidth usage
     _, top = ax.get_ylim()
     ax.set_ylim(0, top * 1.5)
     _apply_style(ax, style)
+    apply_scene_shading(ax, view.scenes)
     return [ax]
 
 
@@ -312,6 +340,8 @@ def render_latencies_per_tile(view: LatencyPerTileView, *, style: PlotStyle=Plot
     handles, labels = axs[0].get_legend_handles_labels()
     fig.legend(handles, labels, loc='center right')  # type: ignore
     pyplot.subplots_adjust(right=0.66)
+    for ax in axs:
+        apply_scene_shading(ax, view.scenes)
     return list(axs)
 
 
@@ -353,6 +383,7 @@ def render_latencies(view: LatencyView, *, title: str="Latency contributions (ms
     pyplot.xlabel("Session time (s)")
     pyplot.ylabel("Latency (ms)")
     _apply_style(ax, style, reverse_legend=True, capitalize_labels=True)
+    apply_scene_shading(ax, view.scenes)
     return [ax]
 
 
@@ -361,6 +392,7 @@ def render_framerates(view: FramerateView, *, title: str="Frames per second", st
     actual_plotargs = ({} if style.figsize is None else {"figsize": style.figsize}) | style.plot_kwargs
     ax = _plot_dataframe(view.fps, noshow=True, title=title, x="sessiontime", descr=view.description, plotargs=actual_plotargs)
     _apply_style(ax, style)
+    apply_scene_shading(ax, view.scenes)
     return [ax]
 
 
@@ -369,6 +401,7 @@ def render_framerates_dropped(view: FramerateView, *, title: str="FPS dropped", 
     actual_plotargs = ({} if style.figsize is None else {"figsize": style.figsize}) | style.plot_kwargs
     ax = _plot_dataframe(view.fps_dropped, noshow=True, title=title, x="sessiontime", descr=view.description, plotargs=actual_plotargs)
     _apply_style(ax, style)
+    apply_scene_shading(ax, view.scenes)
     return [ax]
 
 
@@ -384,6 +417,7 @@ def render_pointcounts(view: PointcountView, *, title: str="Receiver point count
     _, top = ax.get_ylim()
     ax.set_ylim(0, top * 1.5)
     _apply_style(ax, style)
+    apply_scene_shading(ax, view.scenes)
     return [ax]
 
 
@@ -433,6 +467,7 @@ def render_progress(view: ProgressView, *, title: str="Pointcloud Progress", sty
     ax.text(0.98, 0.98, view.description, transform=ax.transAxes, verticalalignment='top', horizontalalignment='right', fontsize='x-small', bbox=props)  # type: ignore
     ax.set_title(title)  # type: ignore
     _apply_style(ax, style)
+    apply_scene_shading(ax, view.scenes)
     return [ax]
 
 

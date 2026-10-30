@@ -8,7 +8,7 @@ from types import CodeType
 from .parser import StatsFileParser
 import pandas
 
-__all__ = ["DataStoreRecord", "DataStore", "DataStoreError"]
+__all__ = ["DataStoreRecord", "DataStore", "DataStoreError", "scene_predicate"]
 
 # Combined-JSON file versioning.
 # FILEVERSION is written into every saved file.
@@ -19,6 +19,20 @@ __all__ = ["DataStoreRecord", "DataStore", "DataStoreError"]
 # for the second one.
 FILEVERSION = 20261030
 OLDEST_COMPATIBLE_VERSION = 20260531
+
+def scene_predicate(scene: Any) -> str:
+    """
+    Return a predicate for the records within a scene, a row of DataStore.scenes().
+    A row rather than a name, because a session can have several scenes with the same name.
+
+    Components can log a few ms after the scene's end while they are being destroyed
+    (e.g. a GazeTarget's final gazing=0), so such records fall outside the scene.
+    """
+    t_start = float(scene["t_start"])
+    if pandas.isna(scene["t_end"]):
+        return f"sessiontime >= {t_start}"
+    return f"{t_start} <= sessiontime <= {float(scene['t_end'])}"
+
 
 class DataStoreError(RuntimeError):
     pass
@@ -377,6 +391,28 @@ class DataStore:
         if not os.path.exists(path):
             raise DataStoreError(f"{self.filename}: file referred to by {field} not found: {path}")
         return path
+
+    def scenes(self, role: Optional[str] = None) -> pandas.DataFrame:
+        """
+        Return the scenes of the session in order, from the ``started`` and ``stopped``
+        records of VR2Gather's pilot controllers. There can be several scenes with the
+        same name. A scene that was never stopped has no ``t_end``.
+
+        :param role: Whose times to use, because scenes change at slightly different
+            times per role. The default is the first role.
+        :return: A DataFrame with columns ``name``, ``t_start``, ``t_end``, empty if the log has no scenes.
+        """
+        if role is None:
+            role = self.roles()[0]
+        rows: List[Dict[str, Any]] = []
+        for record in self.data:
+            if record.get("role") != role or "Pilot" not in str(record.get("component")) or "scene" not in record:
+                continue
+            if "started" in record:
+                rows.append({"name": record["scene"], "t_start": record["sessiontime"], "t_end": None})
+            elif "stopped" in record and rows and rows[-1]["name"] == record["scene"]:
+                rows[-1]["t_end"] = record["sessiontime"]
+        return pandas.DataFrame(rows, columns=["name", "t_start", "t_end"]).astype({"t_end": float})
 
     def describe(self) -> str:
         """Return a short human-readable description of this session and its annotations."""

@@ -6,7 +6,7 @@ Each check takes a DataStore and its parameters, and returns a list of messages
 describing what it found. The checker decides which checks to run, with which
 values, and whether a message is an error or a warning.
 """
-from typing import Dict, List
+from typing import Dict, List, Sequence
 
 from .datastore import DataStore, DataStoreError, DataStoreRecord
 
@@ -16,6 +16,7 @@ __all__ = [
     "check_session_end",
     "check_referenced_files",
     "check_required_records",
+    "check_scenes",
 ]
 
 
@@ -91,4 +92,22 @@ def check_required_records(ds: DataStore, required: Dict[str, int]) -> List[str]
             count = sum(1 for r in ds.data if r["role"] == role and _component_type(r) == component)
             if count < minimum:
                 problems.append(f"{role}: {count} {component} records (required: at least {minimum})")
+    return problems
+
+
+def check_scenes(ds: DataStore, required: Sequence[str] = ()) -> List[str]:
+    """
+    Report scenes that are missing for a role, that weren't finished, or that roles disagree on.
+
+    :param required: Names of the scenes that every role must have.
+    """
+    problems = []
+    names = {}
+    for role in ds.roles():
+        scenes = ds.scenes(role)
+        names[role] = list(scenes["name"])
+        problems += [f"{role}: no scene {name}" for name in required if name not in names[role]]
+        problems += [f"{role}: scene {name} wasn't finished" for name in scenes[scenes["t_end"].isna()]["name"]]
+    if len({tuple(n) for n in names.values()}) > 1:
+        problems.append(f"roles went through different scenes: {names}")
     return problems

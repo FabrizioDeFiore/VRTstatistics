@@ -1,5 +1,5 @@
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, ClassVar, Dict, Optional, Type
 import pandas as pd
 
@@ -33,6 +33,8 @@ class View:
     default_filename: ClassVar[str] = ""
     required_annotation: ClassVar[Optional[str]] = None
     description: str
+    # kw_only so that subclasses can declare fields without defaults.
+    scenes: Optional[pd.DataFrame] = field(default=None, kw_only=True)
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -195,7 +197,7 @@ def extract_latencies(ds: DataStore, *, show_framedrops: bool = False, show_tile
             tileswitches = tileswitches_df
 
     return LatencyView(
-        description=ds.describe(),
+        description=ds.describe(), scenes=ds.scenes(),
         area=area,
         end2end=end2end,
         framedrops=framedrops,
@@ -228,7 +230,7 @@ def extract_latencies_per_tile(ds: DataStore) -> LatencyPerTileView:
         ]
     )
     return LatencyPerTileView(
-        description=ds.describe(),
+        description=ds.describe(), scenes=ds.scenes(),
         per_tile=per_tile,
         nTiles=nTiles,
         sender=sender,
@@ -244,7 +246,7 @@ def extract_resources(ds: DataStore) -> ResourceView:
         fields=['sessiontime', 'role.=cpu', 'role.=mem', 'role.=recv_bandwidth', 'role.=sent_bandwidth']
     )
     resources = dataFilter(resources)
-    return ResourceView(description=ds.describe(), resources=resources)
+    return ResourceView(description=ds.describe(), scenes=ds.scenes(), resources=resources)
 
 
 def extract_framerates(ds: DataStore) -> FramerateView:
@@ -291,7 +293,7 @@ def extract_framerates(ds: DataStore) -> FramerateView:
     )
     fps_dropped = fps_dropped_filter(fps_dropped)
 
-    return FramerateView(description=ds.describe(), fps=fps, fps_dropped=fps_dropped)
+    return FramerateView(description=ds.describe(), scenes=ds.scenes(), fps=fps, fps_dropped=fps_dropped)
 
 
 def extract_pointcounts(ds: DataStore) -> PointcountView:
@@ -304,7 +306,7 @@ def extract_pointcounts(ds: DataStore) -> PointcountView:
         fields=['sessiontime', 'component_role.=points_per_cloud']
     )
     pointcounts = dataFilter(pointcounts)
-    return PointcountView(description=ds.describe(), pointcounts=pointcounts)
+    return PointcountView(description=ds.describe(), scenes=ds.scenes(), pointcounts=pointcounts)
 
 
 def extract_progress(ds: DataStore) -> ProgressView:
@@ -331,7 +333,7 @@ def extract_progress(ds: DataStore) -> ProgressView:
             elif col == f"{sender}.pc.encoder":
                 df[col] = df[col] / (nTiles * nQualities)
 
-    return ProgressView(description=ds.describe(), progress=df)
+    return ProgressView(description=ds.describe(), scenes=ds.scenes(), progress=df)
 
 
 # ── Register extractors ────────────────────────────────────────────────────────
