@@ -15,7 +15,7 @@ __all__ = ["DataStoreRecord", "DataStore", "DataStoreError"]
 # whenever the on-disk schema changes. Use the date of the change as an integer
 # (YYYYMMDD). If two incompatible changes happen on the same day, use YYYYMMDD+1
 # for the second one.
-FILEVERSION = 20260531
+FILEVERSION = 20261030
 OLDEST_COMPATIBLE_VERSION = 20260531
 
 class DataStoreError(RuntimeError):

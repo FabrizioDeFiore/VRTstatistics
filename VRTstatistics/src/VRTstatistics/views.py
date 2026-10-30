@@ -126,9 +126,9 @@ class ProgressView(View):
 
 def extract_latencies(ds: DataStore, *, show_framedrops: bool = False, show_tileswitches: bool = False) -> LatencyView:
     """Extract latency contribution data from a DataStore."""
-    engine.ensure(ds, "latency")
-    sender = ds.applied_annotations["latency"]["sender"]
-    receiver = ds.applied_annotations["latency"]["receiver"]
+    latency = engine.ensure(ds, "latency")
+    sender = latency["sender"]
+    receiver = latency["receiver"]
 
     area_filter = (
         TileCombiner(f"{sender}.pc.grabber.encoder_queue_ms", "encoder queue", "mean", combined=True) +
@@ -199,10 +199,10 @@ def extract_latencies(ds: DataStore, *, show_framedrops: bool = False, show_tile
 
 def extract_latencies_per_tile(ds: DataStore) -> LatencyPerTileView:
     """Extract per-tile latency data from a DataStore. Requires nTiles > 1."""
-    engine.ensure(ds, "latency")
-    sender = ds.applied_annotations["latency"]["sender"]
-    receiver = ds.applied_annotations["latency"]["receiver"]
-    nTiles = ds.applied_annotations["latency"].get("nTiles", 1)
+    latency = engine.ensure(ds, "latency")
+    sender = latency["sender"]
+    receiver = latency["receiver"]
+    nTiles = latency.get("nTiles", 1)
     assert nTiles > 1
     per_tile = ds.get_dataframe(
         predicate=f'".pc." in component_role or component_role == "{receiver}.voice.renderer" or component_role == "{receiver}.synchronizer"',
@@ -242,9 +242,9 @@ def extract_resources(ds: DataStore) -> ResourceView:
 
 def extract_framerates(ds: DataStore) -> FramerateView:
     """Extract framerate data (fps and dropped frames per pipeline stage) from a DataStore."""
-    engine.ensure(ds, "latency")
-    sender = ds.applied_annotations["latency"]["sender"]
-    receiver = ds.applied_annotations["latency"]["receiver"]
+    latency = engine.ensure(ds, "latency")
+    sender = latency["sender"]
+    receiver = latency["receiver"]
 
     fps_filter = (
         TileCombiner(f"{sender}.voice.grabber.fps", "voice capturer", "min", combined=True, optional=True) +
@@ -289,8 +289,8 @@ def extract_framerates(ds: DataStore) -> FramerateView:
 
 def extract_pointcounts(ds: DataStore) -> PointcountView:
     """Extract receiver point count data from a DataStore."""
-    engine.ensure(ds, "latency")
-    receiver = ds.applied_annotations["latency"]["receiver"]
+    latency = engine.ensure(ds, "latency")
+    receiver = latency["receiver"]
     dataFilter = TileCombiner(f"{receiver}.pc.renderer.*.points_per_cloud", "points per cloud", "sum", combined=True, keep=True)
     pointcounts = ds.get_dataframe(
         predicate=f'"{receiver}.pc.renderer" in component_role',
@@ -302,10 +302,10 @@ def extract_pointcounts(ds: DataStore) -> PointcountView:
 
 def extract_progress(ds: DataStore) -> ProgressView:
     """Extract point cloud pipeline progress data from a DataStore."""
-    engine.ensure(ds, "latency")
-    sender = ds.applied_annotations["latency"]["sender"]
-    nTiles = ds.applied_annotations["latency"].get("nTiles", 1)
-    nQualities = ds.applied_annotations["latency"].get("nQualities", 1)
+    latency = engine.ensure(ds, "latency")
+    sender = latency["sender"]
+    nTiles = latency.get("nTiles", 1)
+    nQualities = latency.get("nQualities", 1)
 
     df = ds.get_dataframe(
         predicate='"aggregate_packets" in record and component_role',

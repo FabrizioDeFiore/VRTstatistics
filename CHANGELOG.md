@@ -12,6 +12,7 @@ combined.json format version scheme).
 - `DataStore.roles()`: the session's roles, from session metadata or (failing that) the records; raises if there are none (#39)
 - `DataStore.master_role()`: the role that created the orchestrator session (#39)
 - `DataStore.orchtime_to_sessiontime()`: convert orchestrator-clock timestamps in record fields to session time (#39)
+- Several instances of an annotation (`latency`), each stored under its full name `name(key=value,...)`; `engine.ensure()` returns the metadata, and raises where it used to silently do nothing or the short name is ambiguous (#34)
 
 ## [1.4.1] — 2026-07-07
 

@@ -14,6 +14,11 @@ class AnnotationStep:
     Subclasses set class-level `name`, `dependencies`, `description`, and
     `params`, and implement `apply()`.
 
+    Set `multi_instance` if one DataStore can meaningfully hold several results
+    of this step with different params. That is only true for a step that
+    records metadata: a step that stamps fields on records would overwrite the
+    fields of the earlier instance.
+
     Register subclasses with the module-level `engine` singleton:
         from VRTstatistics.annotation import engine
         engine.register(MyAnnotationStep)
@@ -22,13 +27,14 @@ class AnnotationStep:
     dependencies: List[str] = []
     description: str = ""
     params: Dict[str, str] = {}  # param_name → description
+    multi_instance: bool = False
 
     def apply(self, ds: DataStore, **params) -> Dict[str, Any]:
         """
         Apply this annotation to the DataStore.
 
-        Called only when this step is not yet in ds.applied_annotations.
-        Returns a metadata dict that is stored as ds.applied_annotations[self.name].
+        Called only when no instance with these params is in ds.applied_annotations.
+        Returns a metadata dict, which the engine stores together with the params.
         """
         raise NotImplementedError
 
@@ -40,6 +46,12 @@ class AnnotationEngine:
     Maintains a registry of AnnotationStep classes. Call ensure() to apply a
     named annotation (and all its dependencies) to a DataStore, skipping any
     that are already applied.
+
+    ds.applied_annotations holds every instance under its full name,
+    "name(key=value,...)" with all parameters of the step, or just "name" for a
+    step without parameters. Files from before instances existed can also have
+    "name" for a step with parameters. Read instances through ensure(), not
+    through these keys.
     """
 
     def __init__(self) -> None:
@@ -68,23 +80,64 @@ class AnnotationEngine:
                     lines.append(f"    {pname}: {pdesc}")
         return "\n".join(lines)
 
-    def ensure(self, ds: DataStore, name: str, **params) -> None:
+    def ensure(self, ds: DataStore, name: str, **params) -> Dict[str, Any]:
         """
-        Ensure annotation `name` has been applied to `ds`.
+        Ensure annotation `name` has been applied to `ds`, and return its metadata.
 
-        If already present in ds.applied_annotations, returns immediately.
-        Otherwise ensures all dependencies first (with no params), then applies.
+        Params select the instance: without params any instance matches, with
+        params only those applied with these values. If exactly one matches it is
+        returned. If none matches the step is applied, with its own defaults for
+        params not given, after ensuring its dependencies (with no params).
+
+        :raises DataStoreError: if several instances match (ask with more params),
+            if the step is unknown or doesn't support another instance, or if an
+            instance was applied by a version that didn't record these params.
         """
-        if name in ds.applied_annotations:
-            return
+        instances = self.instances(ds, name)
+        matches = [key for key, metadata in instances.items() if self._matches(name, metadata, params)]
+        if len(matches) > 1:
+            raise DataStoreError(f"Several instances of annotation '{name}' match {params}: {matches}")
+        if matches:
+            return instances[matches[0]]
         step_class = self._registry.get(name)
         if step_class is None:
             raise DataStoreError(f"Unknown annotation step '{name}'. Registered: {list(self._registry)}")
+        if instances and not step_class.multi_instance:
+            raise DataStoreError(
+                f"Annotation '{name}' was already applied with other parameters, "
+                f"and doesn't support several instances (requested: {params})"
+            )
         for dep in step_class.dependencies:
             self.ensure(ds, dep)
         step = step_class()
         result = step.apply(ds, **params)
-        ds.applied_annotations[name] = result if result is not None else {}
+        metadata = {**(result if result is not None else {}), **params}
+        ds.applied_annotations[self._full_name(step_class, metadata)] = metadata
+        return metadata
+
+    @staticmethod
+    def instances(ds: DataStore, name: str) -> Dict[str, Dict[str, Any]]:
+        """Return the applied instances of annotation `name`, by full name."""
+        return {
+            key: metadata for key, metadata in ds.applied_annotations.items()
+            if key == name or key.startswith(f"{name}(")
+        }
+
+    @staticmethod
+    def _full_name(step_class: Type[AnnotationStep], metadata: Dict[str, Any]) -> str:
+        """Same spelling as the annotation argument of the command line tools."""
+        args = [f"{k}={metadata[k]}" for k in sorted(step_class.params) if k in metadata]
+        return f"{step_class.name}({','.join(args)})" if args else step_class.name
+
+    @staticmethod
+    def _matches(name: str, metadata: Dict[str, Any], params: Dict[str, Any]) -> bool:
+        missing = [k for k in params if k not in metadata]
+        if missing:
+            raise DataStoreError(
+                f"Annotation '{name}' was applied without recording {missing}, "
+                f"so can't tell whether it matches {params}"
+            )
+        return all(str(metadata[k]) == str(v) for k, v in params.items())
 
 
 engine = AnnotationEngine()
@@ -124,6 +177,7 @@ class LatencyAnnotation(AnnotationStep):
         "sender": "Role name of the point-cloud sender (default: first role in session)",
         "receiver": "Role name of the point-cloud receiver (default: second role in session)",
     }
+    multi_instance = True
 
     def apply(self, ds: DataStore, **params) -> Dict[str, Any]:
         roles = ds.session_metadata.get("roles", [])
@@ -163,15 +217,17 @@ engine.register(LatencyAnnotation)
 def describe(ds: DataStore) -> str:
     """Return a short human-readable description of the session and annotations."""
     sm = ds.session_metadata
-    ann = ds.applied_annotations
 
     start = sm.get("session_start_time", 0)
     dt = datetime.datetime.fromtimestamp(start).strftime("%d-%b-%Y %H:%M") if start else "unknown"
 
     lines = [dt]
 
-    lat = ann.get("latency", {})
-    if lat:
+    # Several instances (e.g. both directions of a two-way session) have no single
+    # sender and receiver to describe, so those fall through to listing the roles.
+    latency_instances = list(engine.instances(ds, "latency").values())
+    if len(latency_instances) == 1:
+        lat = latency_instances[0]
         sender = lat.get("sender", "?")
         receiver = lat.get("receiver", "?")
         lines.append(f"{sender} → {receiver}")
