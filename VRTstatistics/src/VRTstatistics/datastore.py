@@ -34,6 +34,9 @@ def scene_predicate(scene: Any) -> str:
     return f"{t_start} <= sessiontime <= {float(scene['t_end'])}"
 
 
+_ROLE_COLORS = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red']
+
+
 class DataStoreError(RuntimeError):
     pass
 
@@ -342,6 +345,33 @@ class DataStore:
         if not roles:
             raise DataStoreError(f"{self.filename}: no roles found in session metadata or records")
         return roles
+
+    def role_labels(self, source: str = "role") -> Dict[str, str]:
+        """
+        Return the label to show for each role. Which label is meaningful differs per
+        experiment, so the experiment says which it wants.
+
+        :param source: ``"role"``, ``"user_name"`` or ``"participant_number"``. The latter
+            comes from ``session_metadata["participant_numbers"]``, which the experiment fills in.
+        :raises DataStoreError: if the source is unknown, or doesn't have a label for every role.
+        """
+        roles = self.roles()
+        if source == "role":
+            return {role: role for role in roles}
+        if source == "user_name":
+            values = self.session_metadata.get("user_names", {})
+        elif source == "participant_number":
+            values = self.session_metadata.get("participant_numbers", {})
+        else:
+            raise DataStoreError(f"Unknown source for role labels: {source}")
+        missing = [role for role in roles if not values.get(role)]
+        if missing:
+            raise DataStoreError(f"{self.filename}: no {source} for roles {missing}")
+        return {role: values[role] for role in roles}
+
+    def role_color(self, role: str) -> str:
+        """Return the colour for a role, which is the same in every view of this session."""
+        return _ROLE_COLORS[self.roles().index(role) % len(_ROLE_COLORS)]
 
     def master_role(self) -> str:
         """
