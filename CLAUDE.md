@@ -170,6 +170,7 @@ VRTstatistics should detect data quality problems as early as possible and raise
 - **Strict parsing**: if a `stats:` line looks malformed, raise an error or emit a loud warning immediately at parse time, not silently at analysis time.
 - **No silent fallbacks**: do not invent default values or skip records to paper over format errors. Surface the problem so it can be fixed at the source.
 - **Validate early**: ingest should check basic sanity of the parsed data (e.g. expected fields present, numeric values in plausible ranges) before writing `combined.json`.
+- **Experiment-level checks** live in a per-experiment checker script, run right after ingest (e.g. TrolleyExperiment's `vrts_session_check.py`). It decides what to check, with which thresholds, and what counts as an error; common checks are in `VRTstatistics.checks`.
 
 The specific case that motivated this: VR2Gather on Windows with a European locale writes commas as decimal separators (e.g. `fps=109,22`). The parser silently split this into `fps=109` plus an orphaned key `22`, producing hundreds of spurious numeric fields. This went undetected until manual inspection of the output.
 

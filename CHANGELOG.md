@@ -16,6 +16,7 @@ combined.json format version scheme).
 - Renamed `latency` annotation to `media_path` and `latencies` views to `latency-contributions`; the old names still work (#43)
 - `DataStore.resolve_file()`: local path of a file that a stats record refers to, raises if it's missing (#41)
 - `VRTstatistics-plot`: `--type` can be repeated, `--save-dir` saves under default filenames, `--import` is now `--module` with the same upward search as the other tools; the old name still works (#39)
+- `VRTstatistics.checks`: common checks for per-experiment checker scripts (clock desync, start times, session end, referenced files, required records) (#39)
 
 ## [1.4.1] — 2026-07-07
 
