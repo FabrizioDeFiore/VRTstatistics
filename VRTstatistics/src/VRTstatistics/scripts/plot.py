@@ -60,7 +60,7 @@ def main():
     if args.type:
         if not args.datastore:
             parser.error("--type requires --datastore")
-        view_cls = View._registry.get(args.type)
+        view_cls = View.find(args.type)
         if view_cls is None:
             parser.error(f"Unknown type {args.type!r}. Use --list-types to see available types.")
         ds = DataStore(args.datastore)

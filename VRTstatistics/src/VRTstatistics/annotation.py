@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Type, Any
 
 from .datastore import DataStore, DataStoreError
 
-__all__ = ["AnnotationStep", "AnnotationEngine", "engine"]
+__all__ = ["AnnotationStep", "AnnotationEngine", "MediaPathAnnotation", "engine"]
 
 
 class AnnotationStep:
@@ -56,6 +56,7 @@ class AnnotationEngine:
 
     def __init__(self) -> None:
         self._registry: Dict[str, Type[AnnotationStep]] = {}
+        self._aliases: Dict[str, str] = {}
 
     def register(self, step_class: Type[AnnotationStep]) -> None:
         """Register an AnnotationStep class by its name."""
@@ -63,13 +64,18 @@ class AnnotationEngine:
             raise ValueError(f"AnnotationStep class {step_class} has no name")
         self._registry[step_class.name] = step_class
 
+    def register_alias(self, alias: str, name: str) -> None:
+        """Make `alias` another name for step `name`: for ensure(), and for instances in existing files."""
+        self._aliases[alias] = name
+
     def list_steps(self) -> str:
         """Return a human-readable listing of all registered annotation steps."""
         if not self._registry:
             return "(no annotation steps registered)"
         lines = []
         for name, cls in sorted(self._registry.items()):
-            lines.append(f"{name}")
+            aliases = [alias for alias, target in self._aliases.items() if target == name]
+            lines.append(f"{name} (also: {', '.join(aliases)})" if aliases else name)
             if cls.description:
                 lines.append(f"  {cls.description}")
             if cls.dependencies:
@@ -93,6 +99,7 @@ class AnnotationEngine:
             if the step is unknown or doesn't support another instance, or if an
             instance was applied by a version that didn't record these params.
         """
+        name = self._aliases.get(name, name)
         instances = self.instances(ds, name)
         matches = [key for key, metadata in instances.items() if self._matches(name, metadata, params)]
         if len(matches) > 1:
@@ -115,12 +122,13 @@ class AnnotationEngine:
         ds.applied_annotations[self._full_name(step_class, metadata)] = metadata
         return metadata
 
-    @staticmethod
-    def instances(ds: DataStore, name: str) -> Dict[str, Dict[str, Any]]:
+    def instances(self, ds: DataStore, name: str) -> Dict[str, Dict[str, Any]]:
         """Return the applied instances of annotation `name`, by full name."""
+        name = self._aliases.get(name, name)
+        names = [name] + [alias for alias, target in self._aliases.items() if target == name]
         return {
             key: metadata for key, metadata in ds.applied_annotations.items()
-            if key == name or key.startswith(f"{name}(")
+            if key.split("(")[0] in names
         }
 
     @staticmethod
@@ -165,17 +173,21 @@ class ComponentRoleAnnotation(AnnotationStep):
         return {"roles": roles}
 
 
-class LatencyAnnotation(AnnotationStep):
+class MediaPathAnnotation(AnnotationStep):
     """
-    Records experiment metadata (sender/receiver roles, protocol, nTiles, etc.)
-    into ds.applied_annotations["latency"].
+    Records which media path the session's standard views look at, and how it
+    is set up, into ds.applied_annotations.
+
+    A media path is the route media takes from one sender to one receiver,
+    through all its stages: capture, encode, transmit, receive, decode, prepare,
+    render.
     """
-    name = "latency"
+    name = "media_path"
     dependencies = ["component_role"]
-    description = "Record latency-experiment metadata: sender/receiver roles, protocol, nTiles, nQualities."
+    description = "Record the media path to look at (sender and receiver roles) and its setup: protocol, nTiles, nQualities."
     params = {
-        "sender": "Role name of the point-cloud sender (default: first role in session)",
-        "receiver": "Role name of the point-cloud receiver (default: second role in session)",
+        "sender": "Role name of the sender (default: first role in session)",
+        "receiver": "Role name of the receiver (default: second role in session)",
     }
     multi_instance = True
 
@@ -211,7 +223,11 @@ class LatencyAnnotation(AnnotationStep):
 
 
 engine.register(ComponentRoleAnnotation)
-engine.register(LatencyAnnotation)
+engine.register(MediaPathAnnotation)
+engine.register_alias("latency", "media_path")
+
+# Old name of the class, for experiment modules that import or subclass it.
+LatencyAnnotation = MediaPathAnnotation
 
 
 def describe(ds: DataStore) -> str:
@@ -225,9 +241,9 @@ def describe(ds: DataStore) -> str:
 
     # Several instances (e.g. both directions of a two-way session) have no single
     # sender and receiver to describe, so those fall through to listing the roles.
-    latency_instances = list(engine.instances(ds, "latency").values())
-    if len(latency_instances) == 1:
-        lat = latency_instances[0]
+    media_paths = list(engine.instances(ds, "media_path").values())
+    if len(media_paths) == 1:
+        lat = media_paths[0]
         sender = lat.get("sender", "?")
         receiver = lat.get("receiver", "?")
         lines.append(f"{sender} → {receiver}")

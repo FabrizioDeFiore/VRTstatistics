@@ -65,7 +65,7 @@ See `testing.md` for a full step-by-step walkthrough including current config fi
 `VRTstatistics-ingest` can both run the session and ingest:
 - Runs the session (unless `--norun <dir>` is passed to re-ingest an existing run).
 - Parses `stats.log` and (if present) `rusage.log` or `vq-brisque.log` from each role.
-- Applies an annotator (`-a latency` is the main one) to add `component_role`, align clocks, and merge.
+- Applies an annotator (`-a media_path` is the main one) to add `component_role`, align clocks, and merge.
 - Saves `combined.json` in the run directory.
 
 ## Key Concepts
@@ -125,9 +125,9 @@ The `Annotator` examines structure records early in each log to identify pipelin
 
 `annotation.py` contains the annotation system:
 - `AnnotationStep` — base class for a single annotation pass
-- `AnnotationEngine` — registry and driver; `engine.ensure(ds, "latency")` runs the named step if not already applied
+- `AnnotationEngine` — registry and driver; `engine.ensure(ds, "media_path")` runs the named step if not already applied
 - `ComponentRoleAnnotation` — adds `component_role` field; discovers protocol, nTiles, nQualities
-- `LatencyAnnotation` — aligns clocks, merges sender + receiver, records experiment metadata
+- `MediaPathAnnotation` (`media_path`, old name `latency`) — records the media path to look at (the route from one sender to one receiver) and its setup
 
 ### Plotting (plots.py)
 

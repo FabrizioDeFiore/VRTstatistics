@@ -211,7 +211,7 @@ VRTstatistics-ingest
 For a latency experiment with PC data, add the annotator:
 
 ```bash
-VRTstatistics-ingest -a latency --config /path/to/examples/latency/config
+VRTstatistics-ingest -a media_path --config /path/to/examples/latency/config
 ```
 
 This:

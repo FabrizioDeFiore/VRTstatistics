@@ -28,6 +28,7 @@ __all__ = [
 class View:
     """Base class for extracted plot data. Carries named DataFrames ready for rendering or CSV export."""
     _registry: ClassVar[Dict[str, Type[View]]] = {}
+    _aliases: ClassVar[Dict[str, str]] = {"latencies": "latency-contributions", "latencies-per-tile": "latency-contributions-per-tile"}
     name: ClassVar[str] = ""
     default_filename: ClassVar[str] = ""
     required_annotation: ClassVar[Optional[str]] = None
@@ -37,6 +38,11 @@ class View:
         super().__init_subclass__(**kwargs)
         if cls.name:
             View._registry[cls.name] = cls
+
+    @classmethod
+    def find(cls, name: str) -> Optional[Type[View]]:
+        """Return the View type registered under `name` or an old name for it, or None."""
+        return View._registry.get(View._aliases.get(name, name))
 
     @classmethod
     def register_extractor(cls, extractor: Callable) -> None:
@@ -67,9 +73,9 @@ class View:
 @dataclass
 class LatencyView(View):
     """Latency contributions: pipeline stage durations and end-to-end latency."""
-    name: ClassVar[str] = "latencies"
-    default_filename: ClassVar[str] = "latencies.pdf"
-    required_annotation: ClassVar[str] = "latency"
+    name: ClassVar[str] = "latency-contributions"
+    default_filename: ClassVar[str] = "latency-contributions.pdf"
+    required_annotation: ClassVar[str] = "media_path"
     area: pd.DataFrame
     end2end: pd.DataFrame
     framedrops: Optional[pd.DataFrame] = None
@@ -79,9 +85,9 @@ class LatencyView(View):
 @dataclass
 class LatencyPerTileView(View):
     """Per-tile latency breakdown for multi-tile sessions."""
-    name: ClassVar[str] = "latencies-per-tile"
-    default_filename: ClassVar[str] = "latencies-per-tile.pdf"
-    required_annotation: ClassVar[str] = "latency"
+    name: ClassVar[str] = "latency-contributions-per-tile"
+    default_filename: ClassVar[str] = "latency-contributions-per-tile.pdf"
+    required_annotation: ClassVar[str] = "media_path"
     per_tile: pd.DataFrame
     nTiles: int
     sender: str
@@ -101,7 +107,7 @@ class FramerateView(View):
     """Frame rates and dropped frames per pipeline stage."""
     name: ClassVar[str] = "framerates"
     default_filename: ClassVar[str] = "framerates.pdf"
-    required_annotation: ClassVar[str] = "latency"
+    required_annotation: ClassVar[str] = "media_path"
     fps: pd.DataFrame
     fps_dropped: pd.DataFrame
 
@@ -111,7 +117,7 @@ class PointcountView(View):
     """Receiver point counts over session time."""
     name: ClassVar[str] = "pointcounts"
     default_filename: ClassVar[str] = "pointcounts.pdf"
-    required_annotation: ClassVar[str] = "latency"
+    required_annotation: ClassVar[str] = "media_path"
     pointcounts: pd.DataFrame
 
 
@@ -120,15 +126,15 @@ class ProgressView(View):
     """Point cloud pipeline progress: aggregate packet sequence numbers per stage."""
     name: ClassVar[str] = "progress"
     default_filename: ClassVar[str] = "progress.pdf"
-    required_annotation: ClassVar[str] = "latency"
+    required_annotation: ClassVar[str] = "media_path"
     progress: pd.DataFrame
 
 
 def extract_latencies(ds: DataStore, *, show_framedrops: bool = False, show_tileswitches: bool = False) -> LatencyView:
     """Extract latency contribution data from a DataStore."""
-    latency = engine.ensure(ds, "latency")
-    sender = latency["sender"]
-    receiver = latency["receiver"]
+    media_path = engine.ensure(ds, "media_path")
+    sender = media_path["sender"]
+    receiver = media_path["receiver"]
 
     area_filter = (
         TileCombiner(f"{sender}.pc.grabber.encoder_queue_ms", "encoder queue", "mean", combined=True) +
@@ -199,10 +205,10 @@ def extract_latencies(ds: DataStore, *, show_framedrops: bool = False, show_tile
 
 def extract_latencies_per_tile(ds: DataStore) -> LatencyPerTileView:
     """Extract per-tile latency data from a DataStore. Requires nTiles > 1."""
-    latency = engine.ensure(ds, "latency")
-    sender = latency["sender"]
-    receiver = latency["receiver"]
-    nTiles = latency.get("nTiles", 1)
+    media_path = engine.ensure(ds, "media_path")
+    sender = media_path["sender"]
+    receiver = media_path["receiver"]
+    nTiles = media_path.get("nTiles", 1)
     assert nTiles > 1
     per_tile = ds.get_dataframe(
         predicate=f'".pc." in component_role or component_role == "{receiver}.voice.renderer" or component_role == "{receiver}.synchronizer"',
@@ -242,9 +248,9 @@ def extract_resources(ds: DataStore) -> ResourceView:
 
 def extract_framerates(ds: DataStore) -> FramerateView:
     """Extract framerate data (fps and dropped frames per pipeline stage) from a DataStore."""
-    latency = engine.ensure(ds, "latency")
-    sender = latency["sender"]
-    receiver = latency["receiver"]
+    media_path = engine.ensure(ds, "media_path")
+    sender = media_path["sender"]
+    receiver = media_path["receiver"]
 
     fps_filter = (
         TileCombiner(f"{sender}.voice.grabber.fps", "voice capturer", "min", combined=True, optional=True) +
@@ -289,8 +295,8 @@ def extract_framerates(ds: DataStore) -> FramerateView:
 
 def extract_pointcounts(ds: DataStore) -> PointcountView:
     """Extract receiver point count data from a DataStore."""
-    latency = engine.ensure(ds, "latency")
-    receiver = latency["receiver"]
+    media_path = engine.ensure(ds, "media_path")
+    receiver = media_path["receiver"]
     dataFilter = TileCombiner(f"{receiver}.pc.renderer.*.points_per_cloud", "points per cloud", "sum", combined=True, keep=True)
     pointcounts = ds.get_dataframe(
         predicate=f'"{receiver}.pc.renderer" in component_role',
@@ -302,10 +308,10 @@ def extract_pointcounts(ds: DataStore) -> PointcountView:
 
 def extract_progress(ds: DataStore) -> ProgressView:
     """Extract point cloud pipeline progress data from a DataStore."""
-    latency = engine.ensure(ds, "latency")
-    sender = latency["sender"]
-    nTiles = latency.get("nTiles", 1)
-    nQualities = latency.get("nQualities", 1)
+    media_path = engine.ensure(ds, "media_path")
+    sender = media_path["sender"]
+    nTiles = media_path.get("nTiles", 1)
+    nQualities = media_path.get("nQualities", 1)
 
     df = ds.get_dataframe(
         predicate='"aggregate_packets" in record and component_role',

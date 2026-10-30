@@ -51,9 +51,9 @@ my-experiment/
 Running each variant multiple times (from the experiment directory):
 
 ```bash
-VRTstatistics-ingest -a latency --config tiled_octree9_fps15/config
-VRTstatistics-ingest -a latency --config tiled_octree9_fps15/config
-VRTstatistics-ingest -a latency --config tiled_octree9_fps15/config
+VRTstatistics-ingest -a media_path --config tiled_octree9_fps15/config
+VRTstatistics-ingest -a media_path --config tiled_octree9_fps15/config
+VRTstatistics-ingest -a media_path --config tiled_octree9_fps15/config
 ```
 
 Each run lands in `tiled_octree9_fps15/run-YYYYMMDD-HHMM/combined.json`. Prefix a run directory with `_` to mark it as a test or excluded run.
@@ -68,7 +68,7 @@ This is what the `prerecorded` variant in the VR2Gather `RepresentationPointclou
 
 **Plotting:** Three levels of use, from quick to fully customised:
 
-- **Quick look** — `VRTstatistics-plot --type latencies run-dir/combined.json` produces a standard plot interactively. Run `VRTstatistics-plot --list-types` to see all available types. Annotation is applied automatically if needed.
+- **Quick look** — `VRTstatistics-plot --type latency-contributions run-dir/combined.json` produces a standard plot interactively. Run `VRTstatistics-plot --list-types` to see all available types. Annotation is applied automatically if needed.
 
 - **Experiment script** — the preferred approach for production output. Create a `create_plots.py` in your experiment directory using the extract / render / publish pipeline:
 
@@ -157,9 +157,9 @@ This is what the `prerecorded` variant in the VR2Gather `RepresentationPointclou
 
 See [testing.md](testing.md) for a full end-to-end walkthrough including ingesting logs and producing plots.
 
-Quick summary: after a run, use `VRTstatistics-ingest -a latency` (or `--norun <dir>` to re-ingest an existing run). Results land in `run-YYYYMMDD-HHMM/combined.json`.
+Quick summary: after a run, use `VRTstatistics-ingest -a media_path` (or `--norun <dir>` to re-ingest an existing run). Results land in `run-YYYYMMDD-HHMM/combined.json`.
 
-For a quick interactive plot: `VRTstatistics-plot --type latencies run-YYYYMMDD-HHMM/combined.json`
+For a quick interactive plot: `VRTstatistics-plot --type latency-contributions run-YYYYMMDD-HHMM/combined.json`
 
 For exploratory analysis in Jupyter:
 
