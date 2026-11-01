@@ -20,6 +20,7 @@ combined.json format version scheme).
 - Scenes as part of the session: `DataStore.scenes()`, `scene_predicate()`, a `scenes` field on `View`, background shading in all standard plots (#32)
 - `DataStore.role_labels(source)` and `role_color(role)`: labels chosen by the experiment, and a fixed colour per role across views (#35)
 - Registering a `View` or annotation step under a name another class already uses is now an error, unless declared with `replace=True` (#39)
+- `DataStore.versions(role)`: app and package versions of a run, "unknown" for older logs (cwi-dis/VR2Gather#373)
 - `component_role` now covers all scenes of a session, not only the first, after re-ingest (#45)
 - Generic views `voice-activity`, `gaze` and `end-to-end-temporal-quality`, from TrolleyExperiment (#39)
 

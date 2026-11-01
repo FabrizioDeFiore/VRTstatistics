@@ -34,6 +34,9 @@ def scene_predicate(scene: Any) -> str:
     return f"{t_start} <= sessiontime <= {float(scene['t_end'])}"
 
 
+# Fields of the VRTConfig stats record that VR2Gather logs at startup.
+VERSION_FIELDS = ("app", "app_version", "vr2gather", "cwipc_unity", "unity", "platform")
+
 _ROLE_COLORS = ['tab:blue', 'tab:orange', 'tab:green', 'tab:red']
 
 
@@ -345,6 +348,15 @@ class DataStore:
         if not roles:
             raise DataStoreError(f"{self.filename}: no roles found in session metadata or records")
         return roles
+
+    def versions(self, role: str) -> Dict[str, str]:
+        """
+        Return what a role's application was built from: app, app_version, vr2gather,
+        cwipc_unity, unity and platform. Each is "unknown" if the log doesn't say, as in
+        logs from before these were logged (cwi-dis/VR2Gather#373).
+        """
+        known = self.session_metadata.get("versions", {}).get(role, {})
+        return {field: known.get(field, "unknown") for field in VERSION_FIELDS}
 
     def role_labels(self, source: str = "role") -> Dict[str, str]:
         """

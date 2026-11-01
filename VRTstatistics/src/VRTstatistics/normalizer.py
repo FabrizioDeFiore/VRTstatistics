@@ -3,7 +3,7 @@ import sys
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple, Any
 
-from .datastore import DataStore, DataStoreError, DataStoreRecord
+from .datastore import DataStore, DataStoreError, DataStoreRecord, VERSION_FIELDS
 
 __all__ = ["SessionNormalizer"]
 
@@ -25,9 +25,12 @@ class _RoleInfo:
     component_map: Dict[str, str]
     # topology metadata (protocol, nTiles, etc.)
     topology: Dict[str, Any]
+    # app and package versions, empty for logs from before they were logged
+    versions: Dict[str, str]
 
     def __init__(self, role: str) -> None:
         self.role = role
+        self.versions = {}
         self.component_map = {}
         self.topology = {}
 
@@ -77,6 +80,12 @@ class SessionNormalizer:
                 file=sys.stderr,
             )
 
+        builds = {
+            tuple(sorted((k, v) for k, v in r.versions.items() if k != "platform")) for r in roles
+        }
+        if len(builds) > 1:
+            print(f"Warning: roles ran different builds: { {r.role: r.versions for r in roles} }", file=sys.stderr)
+
         for r in roles:
             if abs(r.desync) > 0.030:
                 print(
@@ -111,6 +120,9 @@ class SessionNormalizer:
             "component_map": {r.role: r.component_map for r in roles},
             "role_topology": {r.role: r.topology for r in roles},
         }
+        versions = {r.role: r.versions for r in roles if r.versions}
+        if versions:
+            self._output.session_metadata["versions"] = versions
 
         if self.verbose:
             for r in roles:
@@ -146,6 +158,12 @@ class SessionNormalizer:
             info.user_name = r["userName"]
         except DataStoreError:
             info.user_name = None
+
+        # Logged at startup, before time sync, so it is only in these raw records.
+        for record in ds.data:
+            if record.get("component") == "VRTConfig" and "app_version" in record:
+                info.versions = {field: record[field] for field in VERSION_FIELDS if field in record}
+                break
 
         self._discover_topology(role, ds, info)
         return info
