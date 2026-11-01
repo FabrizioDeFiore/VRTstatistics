@@ -407,6 +407,90 @@ def extract_gaze(ds: DataStore, *, label_source: str = "role") -> GazeView:
     )
 
 
+@dataclass
+class EndToEndTemporalQualityView(View):
+    """End-to-end temporal quality: how media reaches the user in time, per sender and receiver."""
+    name: ClassVar[str] = "end-to-end-temporal-quality"
+    default_filename: ClassVar[str] = "end-to-end-temporal-quality.pdf"
+    latency: pd.DataFrame  # sessiontime, sender, receiver, medium, value
+    continuity: pd.DataFrame  # sessiontime, sender, receiver, medium, value
+    labels: Dict[str, str]
+    role_colors: Dict[str, str]
+    clock_desync: Optional[str]  # Goes into both directions' latency with opposite signs
+
+
+# What each medium measures at its last stage. Voice latency_ms is a mean over the stats
+# interval, and point cloud latency_max_ms a highest, so the two aren't comparable yet
+# (cwi-dis/VR2Gather#382, cwi-dis/cwipc_unity#57).
+LATENCY_STATISTICS = {"voice": "mean", "point cloud": "max"}
+CONTINUITY_MEASURES = {"voice": "Voice dropped (%)", "point cloud": "Point cloud fps"}
+
+
+def _worst_across_tiles(records: List[Dict[str, Any]], field_name: str, worst: str) -> pd.DataFrame:
+    """Per time, the worst value of a field across tiles, using each tile's latest value."""
+    per_tile = pd.DataFrame(records).pivot_table(index="sessiontime", columns="component_role", values=field_name, aggfunc="last")
+    return getattr(per_tile.ffill(), worst)(axis=1).rename("value").reset_index()
+
+
+def extract_end_to_end_temporal_quality(ds: DataStore, *, label_source: str = "role") -> EndToEndTemporalQualityView:
+    """
+    Extract what reaches the user, from the last stage of voice and point clouds.
+    See DataStore.role_labels() for label_source.
+
+    Only for two roles: voice records don't say whose voice they carry
+    (cwi-dis/VR2Gather#381), so the sender is the other role. Point cloud latency
+    is the highest and fps the lowest across tiles (#44).
+
+    :raises DataStoreError: if there aren't exactly two roles, or neither medium has data.
+    """
+    roles = ds.roles()
+    if len(roles) != 2:
+        raise DataStoreError(f"end-to-end temporal quality requires exactly two roles, found {roles}")
+    engine.ensure(ds, "component_role")
+    latency = []
+    continuity = []
+    for sender, receiver in (roles, roles[::-1]):
+        def add(table: List[pd.DataFrame], medium: str, values: pd.DataFrame) -> None:
+            table.append(values.assign(sender=sender, receiver=receiver, medium=medium))
+
+        records = [r for r in ds.data if r["role"] == receiver]
+        voice = [
+            r for r in records
+            if str(r.get("component")).startswith("VoicePipelineOther") and "latency_ms" in r
+        ]
+        if voice:
+            voice_table = pd.DataFrame(voice)[["sessiontime", "latency_ms", "zero_inserted_percentage"]]
+            add(latency, "voice", voice_table.rename(columns={"latency_ms": "value"})[["sessiontime", "value"]])
+            add(continuity, "voice", voice_table.rename(columns={"zero_inserted_percentage": "value"})[["sessiontime", "value"]])
+        point_clouds = [
+            r for r in records
+            if r["component_role"].startswith(f"{receiver}.pc.renderer.") and "latency_max_ms" in r
+        ]
+        if point_clouds:
+            add(latency, "point cloud", _worst_across_tiles(point_clouds, "latency_max_ms", "max"))
+            add(continuity, "point cloud", _worst_across_tiles(point_clouds, "fps", "min"))
+    if not latency:
+        raise DataStoreError(f"{ds.filename}: no voice or point cloud records for end-to-end temporal quality")
+
+    labels = ds.role_labels(source=label_source)
+    desyncs = ds.session_metadata.get("desyncs", {})
+    clock_desync = None
+    # With a media path, describe() already shows it.
+    if all(role in desyncs for role in roles) and not engine.instances(ds, "media_path"):
+        uncertainties = ds.session_metadata.get("desync_uncertainties", {})
+        uncertainty = max(uncertainties.get(role, 0) for role in roles) / 2
+        difference = desyncs[roles[0]] - desyncs[roles[1]]
+        clock_desync = f"clock desync {labels[roles[0]]} - {labels[roles[1]]}: {difference * 1000:.0f} ms ± {uncertainty * 1000:.0f}"
+    return EndToEndTemporalQualityView(
+        description=ds.describe(), scenes=ds.scenes(),
+        latency=pd.concat(latency, ignore_index=True),
+        continuity=pd.concat(continuity, ignore_index=True),
+        labels=labels,
+        role_colors={role: ds.role_color(role) for role in roles},
+        clock_desync=clock_desync,
+    )
+
+
 # ── Register extractors ────────────────────────────────────────────────────────
 
 LatencyView.register_extractor(extract_latencies)
@@ -417,3 +501,4 @@ PointcountView.register_extractor(extract_pointcounts)
 ProgressView.register_extractor(extract_progress)
 VoiceView.register_extractor(extract_voice)
 GazeView.register_extractor(extract_gaze)
+EndToEndTemporalQualityView.register_extractor(extract_end_to_end_temporal_quality)

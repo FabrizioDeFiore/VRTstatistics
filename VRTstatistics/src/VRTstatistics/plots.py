@@ -15,6 +15,7 @@ from .analyze import DataFrameFilter, TileCombiner, SessionTimeFilter
 from .annotation import engine
 from .views import (
     LatencyView, LatencyPerTileView, ResourceView, FramerateView, PointcountView, ProgressView, VoiceView, GazeView,
+    EndToEndTemporalQualityView, CONTINUITY_MEASURES, LATENCY_STATISTICS,
     extract_latencies, extract_latencies_per_tile, extract_resources,
     extract_framerates, extract_pointcounts, extract_progress,
     extract_voice, extract_gaze,
@@ -594,6 +595,40 @@ def render_gaze(view: GazeView, *, title: str="Gaze activity", style: PlotStyle=
     return [ax]
 
 
+def render_end_to_end_temporal_quality(view: EndToEndTemporalQualityView, *, title: str="End-to-end temporal quality", style: PlotStyle=PlotStyle()) -> List[Axes]:
+    """Render one latency panel and one continuity panel per medium from an EndToEndTemporalQualityView."""
+    media = [m for m in CONTINUITY_MEASURES if m in set(view.continuity["medium"])]
+    n_panels = 1 + len(media)
+    figsize = style.figsize or (14, 3 * n_panels)
+    fig, axes = pyplot.subplots(n_panels, 1, figsize=figsize, sharex=True)
+    axes = list(axes)
+    linestyles = {"voice": "-", "point cloud": "--"}
+
+    for ax in axes:
+        apply_scene_shading(ax, view.scenes)
+
+    def plot_lines(ax: Axes, table: pd.DataFrame, with_medium: bool) -> None:
+        for (sender, receiver, medium), line in table.groupby(["sender", "receiver", "medium"], sort=False):
+            label = f"{view.labels[sender]} → {view.labels[receiver]}"
+            if with_medium:
+                label += f" {medium} ({LATENCY_STATISTICS[medium]})"
+            ax.plot(line["sessiontime"], line["value"], color=view.role_colors[sender],
+                    linestyle=linestyles[medium], linewidth=0.8, label=label)
+        ax.legend()
+
+    plot_lines(axes[0], view.latency, True)
+    axes[0].set_ylabel("End-to-end latency (ms)")
+    heading = f"{title} — {view.description}"
+    if view.clock_desync:
+        heading += f"\n{view.clock_desync}"
+    axes[0].set_title(heading)
+    for ax, medium in zip(axes[1:], media):
+        plot_lines(ax, view.continuity[view.continuity["medium"] == medium], False)
+        ax.set_ylabel(CONTINUITY_MEASURES[medium])
+    axes[-1].set_xlabel("Session time (s)")
+    return axes
+
+
 LatencyView.register_renderer(render_latencies)
 LatencyPerTileView.register_renderer(render_latencies_per_tile)
 ResourceView.register_renderer(render_resources)
@@ -602,3 +637,4 @@ PointcountView.register_renderer(render_pointcounts)
 ProgressView.register_renderer(render_progress)
 VoiceView.register_renderer(render_voice)
 GazeView.register_renderer(render_gaze)
+EndToEndTemporalQualityView.register_renderer(render_end_to_end_temporal_quality)

@@ -21,7 +21,7 @@ combined.json format version scheme).
 - `DataStore.role_labels(source)` and `role_color(role)`: labels chosen by the experiment, and a fixed colour per role across views (#35)
 - Registering a `View` or annotation step under a name another class already uses is now an error, unless declared with `replace=True` (#39)
 - `component_role` now covers all scenes of a session, not only the first, after re-ingest (#45)
-- Generic views `voice-activity` and `gaze`, from TrolleyExperiment (#39)
+- Generic views `voice-activity`, `gaze` and `end-to-end-temporal-quality`, from TrolleyExperiment (#39)
 
 ## [1.4.1] — 2026-07-07
 
