@@ -34,6 +34,8 @@ pip install -e VRTstatistics
 
 All three packages share the `.venv` at the repo root. Python ≥ 3.12 is required.
 
+When working on VRTstatistics together with an experiment, you can instead use that experiment repo's venv, with editable installs from the sibling checkout (`pip install -e ../VRTstatistics/VRTrun -e ../VRTstatistics/VRTstatistics`), so that changes on either side take effect immediately. Then you don't need a `.venv` here.
+
 VS Code: select the `.venv` interpreter with `Python: Select Interpreter`. A `launch.json` for debugpy attach is in `.vscode/`.
 
 Most tools accept `--debugpy` (waits for debugpy attach on port 5678) or `--pausefordebug` (waits for a keypress to attach by PID).

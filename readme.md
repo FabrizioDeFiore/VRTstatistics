@@ -16,7 +16,7 @@ This document presumes the end-user computers are running Windows (the controlli
 
 **System-oriented experiments** (primary use): Automated runs with no participants, varying parameters such as transport protocol, framerate, encoder quality, and tiling. Goal: measure latency, bandwidth, and resource usage for system-focused scientific papers. Multiple runs per configuration provide statistical robustness.
 
-**User-centric experiments**: Sessions with two real participants interacting. Goal: measure human behaviour — turn-taking in speech, gaze direction, movement patterns — for user-focused scientific papers. Fewer parameter variations; key metadata is a participant identifier for matching to questionnaires or interviews.
+**User-centric experiments**: Sessions with real participants, alone or interacting. Goal: measure human behaviour — turn-taking in speech, gaze direction, movement patterns — for user-focused scientific papers. Fewer parameter variations; key metadata is a participant identifier for matching to questionnaires or interviews.
 
 **Demo/exhibition control**: VRTrun used to start and stop VR2Gather on multiple machines from a single laptop, avoiding running between rooms. Logs are timestamped for post-hoc debugging. No upfront analysis intended.
 
@@ -89,7 +89,66 @@ This is what the `prerecorded` variant in the VR2Gather `RepresentationPointclou
 
 - **Custom plot types** — define a `View` subclass with `name`, `default_filename`, and a docstring, plus standalone `extract_*` and `render_*` functions, then call `MyView.register_extractor(...)` and `MyView.register_renderer(...)`. A name already used by another `View` is an error, unless you declare `class MyView(View, replace=True)`. After `import my_module` the new type appears in `--list-types` and is usable via `view_cls.extract(ds).render()`. See issue #31 for planned examples.
 
-  > TODO: this whole area (annotation steps, `--module`, the View registry) needs a proper documentation pass. The emerging pattern for a per-experiment analysis module: define a `vrts_<experiment>.py` at the root of the experiment's own repo, with custom `View` subclasses (as above) *and* `AnnotationStep` subclasses (see `annotation.py`) registered with the shared `engine`. Apply with `VRTstatistics-ingest -a <name> --module vrts_<experiment>` (`VRTstatistics-annotate` has the same `--module`). Both search upward from the current directory if the module isn't otherwise importable, so this works from a session subdirectory with no packaging/install step. Working example: `TrolleyExperiment`'s `vrts_trolley.py` (`TrolleyAnnotation` + `VoiceView`/`GazeView`/`PositionView`).
+  An experiment that needs more than a few custom types should have its own analysis module, see [Per-experiment analysis module](#per-experiment-analysis-module).
+
+## User-centric experiment structure
+
+So far this describes the choices made for one experiment, [TrolleyExperiment](https://github.com/cwi-dis/TrolleyExperiment), whose README has the details. We'll adjust it as we get more experience with user experiments.
+
+The main difference from a system experiment is that **a session can't be redone**: the participants have gone home. So the structure follows sessions rather than parameter variants, and checking the data right away matters much more.
+
+```
+my-experiment/
+  vrts_my_experiment.py       # analysis module, see "Per-experiment analysis module"
+  vrts_session_check.py       # post-session checker
+  experiments/
+    _config/                  # base config template, copied for each session
+    OVERVIEW.md               # what each session is, and which run counts
+    session-pair-07/          # one directory per session
+      notes.md                # who ran it, anything that went wrong
+      config/
+        runconfig.json        # machine addresses and roles for this session
+        p1/config-user.json   # userName: "07p1"
+        p2/config-user.json   # userName: "07p2"
+      run-20260720-1407/      # usually one run
+    session-solo-15/
+      config/
+        p0/config-user.json   # userName: "15p0"
+      run-20260721-1036/
+    jack-test02-pair/         # test session, with a descriptive name
+  questionnaires/             # transcribed answers, keyed on participant number
+  recordings/                 # video and audio: not in git, see below
+```
+
+**Sessions.** Trolley names them `<phase>-<condition>-NN`, such as `pilot-solo-01` or `session-pair-07`, with one running number across all of them. Roles are `p1` and `p2` in a paired session, and `p0` in a solo one. Config files for upcoming sessions are prepared ahead of time, and the participant details are filled in when the participants arrive.
+
+**Who is who.** Trolley uses two identifiers:
+
+- The user name, in the VR2Gather config, carries the session and role (`07p1`), so a plot shows at a glance where it came from.
+- The participant number (`P13`), also on the consent form, links a role to questionnaires and interviews. It isn't known to VR2Gather, so Trolley's app logs it and its annotation step puts it in `session_metadata["participant_numbers"]`.
+
+**Personal data.** Keep video and audio recordings out of git, and keep real names out of anything committed. This is hard to undo afterwards.
+
+**Runs that went wrong.** A session can end up with several runs, for example after an abort. Keep them all, and record in `notes.md` and `OVERVIEW.md` what happened and which run counts. There's no support for this in VRTstatistics yet (#40).
+
+**During and after a session:**
+
+1. On a Mac, run ingest under `caffeinate -i`. It waits unattended for the whole session and then collects a lot of data, and an idle sleep during either stage leaves the run incomplete. In Trolley this happened twice.
+2. Run the post-session checker straight away, while the participants and machines are still there.
+3. Make sure the results are safely stored somewhere else before you consider the session done.
+
+## Demo and exhibition structure
+
+No analysis is needed here, only a way to start and stop everything from one laptop. A `config/` directory with a `runconfig.json` listing the machines is enough (and otherwise you can add the other config files as per the previous sections):
+
+```
+my-demo/
+  config/
+    runconfig.json
+  run-20260528-1410/        # one per demo, kept for debugging afterwards
+```
+
+Run `VRTrun` from `my-demo/`. Each run's logs are collected into its own directory, so you can find out later what went wrong. See [Running an experiment](#running-an-experiment).
 
 ## Preparing the VR2Gather experience to run
 
@@ -184,6 +243,71 @@ The `--predicate` option is a Python boolean expression (`sessiontime > 10`, `"f
 
 > Examples to be provided. Also need examples for field constructs like `role=latency_ms`.
 
+
+## Per-experiment analysis module
+
+An experiment with its own analysis keeps it in its own repo, in one file at the repo root: `vrts_<experiment>.py`. It holds the experiment's `View` subclasses and `AnnotationStep` subclasses, registered with `register_extractor`, `register_renderer` and `engine.register`. Working example: `vrts_trolley.py` in TrolleyExperiment.
+
+Load it with `--module`, which all of `VRTstatistics-ingest`, `-annotate` and `-plot` have:
+
+```
+VRTstatistics-ingest -a <name> --module vrts_<experiment>
+VRTstatistics-plot --module vrts_<experiment> --type <view> --type <view> -d combined.json --save-dir .
+```
+
+If the module isn't otherwise importable, `--module` searches upward from the current directory, so this works from a session directory with no packaging or install step.
+
+**What the experiment decides.** VRTstatistics provides functions, and the module or its scripts say what they mean for this experiment. Examples: which label to show for a role (`ds.role_labels(source=...)`, or `label_source=` on generic views) and what counts as a problem (see the post-session checker below).
+
+**Use what the session already knows** rather than deriving it again:
+
+| | |
+|---|---|
+| `ds.roles()`, `ds.master_role()`, `ds.role_labels()`, `ds.role_color()` | Who took part, and how to show them |
+| `ds.scenes()`, `scene_predicate()` | Scenes, and the records in one |
+| `ds.resolve_file(record, field)` | A file that a record refers to, such as a voice recording |
+| `ds.orchtime_to_sessiontime()` | Orchestrator-clock timestamps in a record's fields |
+| `ds.versions(role)` | The app and package versions of a run, `"unknown"` for older logs |
+| `component_role` annotation | Pipeline components by what they do, without instance numbers |
+
+**Generic views come first.** `voice-activity`, `gaze` and `end-to-end-temporal-quality` work on any session with the right components. An experiment can make one use its own labels or scene names by registering its own extractor around the generic one.
+
+**Anything built only on VR2Gather components is a backport candidate.** If an extractor reads no components of the experiment's own app, it is probably useful to other experiments. Mark it in a comment and open a VRTstatistics issue. Declaring your own version of an existing view with `class MyView(View, replace=True)` is a good way to mark the same thing: a name another class already uses is an error otherwise.
+
+**Keep workarounds apart from enrichment.** Code that corrects a VR2Gather logging bug is not experiment logic. Keep it in clearly separate functions, each saying which upstream issue it works around and which data it applies to, so it can be recognised and retired. Use `ds.versions(role)` to tell which runs need it, for logs that have it.
+
+**Several analysts** work on branches of the experiment repo rather than on copies of the module, so that they don't end up with near-identical files that disagree. Note: this was not always applied, and it may not be the best idea. Update this as more experience develops.
+
+### Post-session checker
+
+Every experiment should have a script that is run right after ingest, while the participants and equipment are still around. In a user-centric experiment a session can't be redone, so finding out a day later that a microphone was muted is too late. Keep it next to the module, such as `vrts_session_check.py` in TrolleyExperiment.
+
+Such a script does two things:
+
+- **Checks data**, using `VRTstatistics.checks` where that fits, with this experiment's values. The script decides what is an error and what a warning. Each check returns a list of messages:
+
+  ```python
+  errors = check_referenced_files(ds, ["RecordUserVoice.filename"])
+  errors += check_required_records(ds, {"RecordUserVoice": 1})
+  errors += check_scenes(ds, ["MyImportantScene"])
+  warnings = check_clock_desync(ds, max_ms=100)
+  ```
+
+- **Saves plots to look at**, and says what the symptoms mean: for example, a flat voice line is a muted microphone, and a gappy gaze plot is tracking trouble.
+
+### Pointer for the experiment repo
+
+Put this in the experiment's `README.md` and `CLAUDE.md`, so a new analyst knows the pattern exists:
+
+```
+Analysis code is in vrts_<experiment>.py, loaded with --module. Right after ingest, run
+<checker script>. See "Per-experiment analysis module" in the VRTstatistics readme.
+```
+
+### What isn't covered
+
+- A VRTstatistics view of a media path looks at one sender and one receiver, and per-sender analysis of more than two participants isn't possible yet (cwi-dis/VR2Gather#381).
+- Analysis above the single run, such as choosing the run that counts for a session, is still up to each experiment (#40).
 
 ## Development
 
