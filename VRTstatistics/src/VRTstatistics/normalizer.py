@@ -1,10 +1,17 @@
 from __future__ import annotations
 import sys
+from collections import defaultdict
 from typing import Dict, List, Optional, Tuple, Any
 
 from .datastore import DataStore, DataStoreError, DataStoreRecord
 
 __all__ = ["SessionNormalizer"]
+
+
+# Fields that one component outputs and that hold a reference to another component, so any
+# record with one of these may be important for discovering the topology. ("self" is the
+# exception: it holds no reference, but says whether a pipeline is outgoing or incoming.)
+_STRUCTURE_FIELDS = ("self", "reader", "writer", "renderer", "decoder", "pusher", "pull_thread", "pipeline")
 
 
 class _RoleInfo:
@@ -61,6 +68,12 @@ class SessionNormalizer:
         if max(start_times) - min(start_times) > 1:
             print(
                 f"Warning: session start times spread {max(start_times) - min(start_times):.1f}s across roles",
+                file=sys.stderr,
+            )
+
+        if len(roles) > 2:
+            print(
+                f"Warning: {len(roles)} roles: a component_role doesn't say whose media it carries, so incoming media of different senders is merged",
                 file=sys.stderr,
             )
 
@@ -138,160 +151,116 @@ class SessionNormalizer:
         return info
 
     def _discover_topology(self, role: str, ds: DataStore, info: _RoleInfo) -> None:
-        """Discover pipeline topology for one role and populate info.component_map and info.topology."""
+        """
+        Discover pipeline topology for one role and populate info.component_map and info.topology.
+
+        Every scene creates its pipelines and components anew, with new instance numbers,
+        so all instances are added: they map to the same component_role, which is what
+        hides the instance numbers from everything above this.
+        """
+        # Only a few dozen of a log's records describe structure, so look at those only.
+        by_component: Dict[str, List[DataStoreRecord]] = defaultdict(list)
         protocol = None
-        try:
-            recs = ds.find_all_records('"proto" in record', f"{role} protocol")
-            protocol = recs[0]["proto"]
-        except DataStoreError:
-            pass
+        for record in ds.data:
+            if any(field in record for field in _STRUCTURE_FIELDS):
+                by_component[str(record.get("component", ""))].append(record)
+            if protocol is None and "proto" in record:
+                protocol = record["proto"]
         info.topology["protocol"] = protocol
 
-        nTiles = 1
-        nQualities = 1
-        compressed = False
+        def pipelines(kind: str) -> List[str]:
+            return [component for component in by_component if kind in component]
 
-        # Self (outgoing) PC pipeline
-        try:
-            r = ds.find_first_record(
-                '"PointCloudPipelineSelf" in component and "self" in record and self == 1',
-                f"{role} self pc pipeline",
-            )
-            pipeline = r["component"]
-            r2 = ds.find_first_record(
-                f'component == "{pipeline}" and "writer" in record',
-                f"{role} self pc writer umbrella",
-            )
-            grabber = r2["reader"]
-            encoder = r2["encoder"]
-            writer_umbrella = r2["writer"]
-            nTiles = r2.get("ntile", 1)
-            nQualities = r2.get("nquality", 1)
-            compressed = "PCEncoder" in encoder
+        pc_setups: List[Tuple[int, int, bool]] = []
+        for pipeline in pipelines("PointCloudPipelineSelf"):
+            setup = self._discover_self_pc(role, pipeline, by_component, protocol, info)
+            if setup:
+                pc_setups.append(setup)
+        for pipeline in pipelines("VoicePipelineSelf"):
+            for r in by_component[pipeline]:
+                if "writer" in r:
+                    info.component_map[r["reader"]] = f"{role}.voice.grabber"
+                    info.component_map[r["encoder"]] = f"{role}.voice.encoder"
+                    info.component_map[r["writer"]] = f"{role}.voice.writer"
+                    break
+        for pipeline in pipelines("PointCloudPipelineOther"):
+            self._discover_other_pc(role, pipeline, by_component, info)
+        for pipeline in pipelines("VoicePipelineOther"):
+            for r in by_component[pipeline]:
+                if "reader" in r:
+                    info.component_map[pipeline] = f"{role}.voice.renderer"
+                    if "preparer" in r:
+                        info.component_map[r["preparer"]] = f"{role}.voice.preparer"
+                    break
 
-            info.component_map[grabber] = f"{role}.pc.grabber"
-            info.component_map[encoder] = f"{role}.pc.encoder"
+        if len(set(pc_setups)) > 1:
+            print(f"Warning: {role}: point cloud setup differs between scenes, using the first: {pc_setups}", file=sys.stderr)
+        info.topology["nTiles"], info.topology["nQualities"], info.topology["compressed"] = (
+            pc_setups[0] if pc_setups else (1, 1, False)
+        )
 
-            if protocol in ("socketio", "tcpreflector"):
-                info.component_map[writer_umbrella] = f"{role}.pc.writer.all"
-            else:
-                try:
-                    writers = ds.find_all_records(
-                        f'component == "{writer_umbrella}" and "pusher" in record',
-                        f"{role} pc writers",
-                    )
-                    for wr in writers:
-                        pusher = wr["pusher"]
-                        if "tile" in wr:
-                            tile = wr["tile"] - 1
-                        else:
-                            tile = wr.get("stream", 0)
-                        info.component_map[pusher] = f"{role}.pc.writer.{tile}"
-                except DataStoreError:
-                    info.component_map[writer_umbrella] = f"{role}.pc.writer.0"
+    def _discover_self_pc(
+        self, role: str, pipeline: str, by_component: Dict[str, List[DataStoreRecord]], protocol: Optional[str], info: _RoleInfo
+    ) -> Optional[Tuple[int, int, bool]]:
+        """Add one outgoing point cloud pipeline. Returns its nTiles, nQualities and compressed, if it is one."""
+        records = by_component[pipeline]
+        umbrella = next((r for r in records if "writer" in r), None)
+        if umbrella is None or not any(r.get("self") == 1 for r in records):
+            return None
+        grabber = umbrella["reader"]
+        encoder = umbrella["encoder"]
+        writer_umbrella = umbrella["writer"]
+        info.component_map[grabber] = f"{role}.pc.grabber"
+        info.component_map[encoder] = f"{role}.pc.encoder"
 
-            if self.verbose:
-                print(f"{role}: self pc pipeline found: grabber={grabber}, encoder={encoder}, nTiles={nTiles}")
-        except DataStoreError:
-            pass
+        writers = [r for r in by_component[writer_umbrella] if "pusher" in r]
+        if protocol in ("socketio", "tcpreflector"):
+            info.component_map[writer_umbrella] = f"{role}.pc.writer.all"
+        elif writers:
+            for wr in writers:
+                tile = wr["tile"] - 1 if "tile" in wr else wr.get("stream", 0)
+                info.component_map[wr["pusher"]] = f"{role}.pc.writer.{tile}"
+        else:
+            info.component_map[writer_umbrella] = f"{role}.pc.writer.0"
 
-        # Self voice pipeline
-        try:
-            r = ds.find_first_record(
-                '"VoicePipelineSelf" in component and "writer" in record',
-                f"{role} self voice pipeline",
-            )
-            info.component_map[r["reader"]] = f"{role}.voice.grabber"
-            info.component_map[r["encoder"]] = f"{role}.voice.encoder"
-            info.component_map[r["writer"]] = f"{role}.voice.writer"
-            if self.verbose:
-                print(f"{role}: self voice pipeline found")
-        except DataStoreError:
-            pass
+        setup = (umbrella.get("ntile", 1), umbrella.get("nquality", 1), "PCEncoder" in encoder)
+        if self.verbose:
+            print(f"{role}: self pc pipeline found: grabber={grabber}, encoder={encoder}, nTiles={setup[0]}")
+        return setup
 
-        # Other (incoming) PC pipeline
-        try:
-            r = ds.find_first_record(
-                '"PointCloudPipelineOther" in component and "self" in record and self == 0',
-                f"{role} other pc pipeline",
-            )
-            pipeline = r["component"]
-            r2 = ds.find_first_record(
-                f'component == "{pipeline}" and "reader" in record',
-                f"{role} other pc reader umbrella",
-            )
-            reader_umbrella = r2["reader"]
-            synchronizer = r2.get("synchronizer")
+    def _discover_other_pc(
+        self, role: str, pipeline: str, by_component: Dict[str, List[DataStoreRecord]], info: _RoleInfo
+    ) -> None:
+        """Add one incoming point cloud pipeline."""
+        records = by_component[pipeline]
+        umbrella = next((r for r in records if "reader" in r), None)
+        if umbrella is None or not any(r.get("self") == 0 for r in records):
+            return
+        reader_umbrella = umbrella["reader"]
+        synchronizer = umbrella.get("synchronizer")
+        if synchronizer:
+            info.component_map[synchronizer] = f"{role}.synchronizer"
 
-            if synchronizer:
-                info.component_map[synchronizer] = f"{role}.synchronizer"
+        for component, component_records in by_component.items():
+            if "TileSelector" in component and any(r.get("pipeline") == pipeline for r in component_records):
+                info.component_map[component] = f"{role}.pc.tileselector"
+                break
 
-            # Tile selector
-            try:
-                r3 = ds.find_first_record(
-                    f'"TileSelector" in component and "pipeline" in record and pipeline == "{pipeline}"',
-                    f"{role} tile selector",
-                )
-                info.component_map[r3["component"]] = f"{role}.pc.tileselector"
-            except DataStoreError:
-                pass
+        readers = [r for r in by_component[reader_umbrella] if "pull_thread" in r]
+        if "SocketIOReader" in reader_umbrella or "TCPReflectorReader" in reader_umbrella:
+            info.component_map[reader_umbrella] = f"{role}.pc.reader.all"
+        elif readers:
+            for rr in readers:
+                tile = rr["tile"] - 1 if "Sub" in reader_umbrella else rr["tile"]
+                info.component_map[rr["pull_thread"]] = f"{role}.pc.reader.{tile}"
+        else:
+            info.component_map[reader_umbrella] = f"{role}.pc.reader.0"
 
-            if "SocketIOReader" in reader_umbrella or "TCPReflectorReader" in reader_umbrella:
-                info.component_map[reader_umbrella] = f"{role}.pc.reader.all"
-            else:
-                try:
-                    readers = ds.find_all_records(
-                        f'component == "{reader_umbrella}" and "pull_thread" in record',
-                        f"{role} pc readers",
-                    )
-                    for rr in readers:
-                        tile = rr["tile"]
-                        if "Sub" in reader_umbrella:
-                            tile = tile - 1
-                        info.component_map[rr["pull_thread"]] = f"{role}.pc.reader.{tile}"
-                except DataStoreError:
-                    info.component_map[reader_umbrella] = f"{role}.pc.reader.0"
-
-            try:
-                decoders = ds.find_all_records(
-                    f'component == "{pipeline}" and "decoder" in record',
-                    f"{role} pc decoders",
-                )
-                for rr in decoders:
-                    info.component_map[rr["decoder"]] = f"{role}.pc.decoder.{rr['tile']}"
-            except DataStoreError:
-                pass
-
-            try:
-                renderers = ds.find_all_records(
-                    f'component == "{pipeline}" and "renderer" in record',
-                    f"{role} pc preparers and renderers",
-                )
-                for rr in renderers:
-                    info.component_map[rr["preparer"]] = f"{role}.pc.preparer.{rr['tile']}"
-                    info.component_map[rr["renderer"]] = f"{role}.pc.renderer.{rr['tile']}"
-            except DataStoreError:
-                pass
-
-            if self.verbose:
-                print(f"{role}: other pc pipeline found: synchronizer={synchronizer}")
-        except DataStoreError:
-            pass
-
-        # Other voice pipeline
-        try:
-            r = ds.find_first_record(
-                '"VoicePipelineOther" in component and "reader" in record',
-                f"{role} other voice pipeline",
-            )
-            info.component_map[r["component"]] = f"{role}.voice.renderer"
-            if "preparer" in r:
-                info.component_map[r["preparer"]] = f"{role}.voice.preparer"
-            if self.verbose:
-                print(f"{role}: other voice pipeline found")
-        except DataStoreError:
-            pass
-
-        info.topology["nTiles"] = nTiles
-        info.topology["nQualities"] = nQualities
-        info.topology["compressed"] = compressed
+        for rr in records:
+            if "decoder" in rr:
+                info.component_map[rr["decoder"]] = f"{role}.pc.decoder.{rr['tile']}"
+            if "renderer" in rr:
+                info.component_map[rr["preparer"]] = f"{role}.pc.preparer.{rr['tile']}"
+                info.component_map[rr["renderer"]] = f"{role}.pc.renderer.{rr['tile']}"
+        if self.verbose:
+            print(f"{role}: other pc pipeline found: synchronizer={synchronizer}")
