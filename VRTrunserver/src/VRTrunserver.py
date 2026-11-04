@@ -3,6 +3,10 @@ import sys
 import time
 import subprocess
 import shutil
+import shlex
+import json
+import threading
+import tempfile
 from typing import Dict, Optional, List
 import datetime
 from flask import Flask, request, Response, jsonify, send_file
@@ -12,6 +16,13 @@ import argparse
 from importlib.metadata import version as _pkg_version
 
 RunnerServerPort = 5002
+
+# What this server does for sensor captures, by version: 2 starts sensors.json's captures,
+# refuses a run whose captures would not record, and stops them by closing their stdin.
+# CWI's server has none of this. A player's VRTrunserver.ps1 reads this line from the module
+# the environment would import (without importing it), so it must stay a literal at the start
+# of a line.
+SENSOR_SUPPORT = 2
 
 if platform.system() == "Windows":
     import WinTmp
@@ -40,17 +51,24 @@ class Settings:
             while not os.path.exists(os.path.join(my_topdir, "VR2Gather.exe")):
                 next_topdir = os.path.dirname(my_topdir)
                 if next_topdir == my_topdir:
-                    raise Exception("Could not find VR2Gather.exe")
+                    # Not inside a build tree (a development venv, say): --executable has to say where the player is.
+                    self.executable = None
+                    self.topworkdir = None
+                    return
                 my_topdir = next_topdir
             # We create a temporary workdir in the same directory as the VR2Gather executable.
             self.executable = os.path.join(my_topdir, "VR2Gather.exe")
             self.topworkdir = os.path.join(my_topdir, "VRTrunserver-workdir")
         else:
             raise Exception(f"Unsupported platform {sys.platform}")
-        
+
     def check_defaults(self):
+        if not self.executable:
+            raise Exception(f"No VR2Gather.exe found above {sys.argv[0]}; pass --executable to say where the player is")
         if not os.path.exists(self.executable):
             raise Exception(f"Executable {self.executable} does not exist")
+        if not self.topworkdir:
+            self.topworkdir = os.path.join(os.path.dirname(os.path.abspath(self.executable)), "VRTrunserver-workdir")
         if not os.path.exists(self.topworkdir):
             os.makedirs(self.topworkdir)
         print(f"VRTrunserver: executable={self.executable}")
@@ -128,50 +146,241 @@ def stop():
 
 process : Optional[psutil.Popen] = None
 
+
+sensor_processes : List[psutil.Popen] = []
+# Seconds a capture gets to stop by itself before it is killed.
+SENSOR_STOP_GRACE = 5
+# Seconds after starting the captures within which one that exits counts as failing to start;
+# 0 skips the check.
+SENSOR_START_CHECK = 2
+process_lock = threading.RLock()
+run_lock = threading.Lock()
+
+def sensors_path(workdir : str) -> Optional[str]:
+    """The sensors file for this run: sensors.local.json, a machine's own wiring, wins over
+    the role's checked-in sensors.json. None when there is neither.
+
+    The same rule as VRTsensors.sensors_path, kept here rather than imported so that the
+    server does not depend on the sensor package: a machine that runs no sensors need not
+    install it, or its Bluetooth and LSL dependencies. test_sensor_regressions.py checks
+    that the two agree."""
+    for name in ("sensors.local.json", "sensors.json"):
+        filename = os.path.join(workdir, name)
+        if os.path.exists(filename):
+            return filename
+    return None
+
+def sensors_left_out(workdir : str, commands : list) -> List[str]:
+    """The programs sensors.json starts that the sensors.local.json in use leaves out.
+
+    A local file replaces the shared one rather than adding to it, so that a machine can
+    leave a sensor out. That makes a sensor listed only in the shared file vanish without
+    an error, which is why each one is named."""
+    def program(command):
+        args = shlex.split(command, posix=os.name != 'nt') if isinstance(command, str) else command
+        return os.path.splitext(os.path.basename(args[0].strip('"\'')))[0].lower() if args else ''
+    shared = os.path.join(workdir, "sensors.json")
+    if sensors_path(workdir) == shared or not os.path.exists(shared):
+        return []
+    try:
+        with open(shared, encoding='utf-8-sig') as fp:
+            listed = json.load(fp)
+    except (OSError, ValueError):
+        return []
+    if not isinstance(listed, list):
+        return []
+    running = {program(c) for c in commands}
+    return sorted({program(c) for c in listed} - running - {''})
+
+def output_argument(args : List[str]) -> Optional[str]:
+    """The value of a capture command's --output, or None."""
+    for index, arg in enumerate(args):
+        if arg == '--output' and index + 1 < len(args):
+            return args[index + 1]
+        if arg.startswith('--output='):
+            return arg.split('=', 1)[1]
+    return None
+
+def start_sensors(workdir : str) -> None:
+    """Start the sensor captures listed in <workdir>/sensors.json, if there is one.
+
+    The file is a JSON list of command lines, uploaded by VRTrun from <config>/<role>/sensors.json,
+    for example ["VRTsensors-bitalino --address COM5 --channel A1=acc --channel I1=btn --udp 127.0.0.1:9010 --output bitalino.jsonl"].
+    They run in the workdir, so an --output without a directory lands beside stats.log and
+    is fetched by VRTrun and merged by the VRTsensors.ingest annotation.
+
+    A sensors.local.json uploaded alongside it wins - that is how a machine says what is
+    plugged into it without editing the shared example. Which of the two was used is
+    printed, because a stale one is otherwise invisible until the run comes back empty.
+    """
+    global sensor_processes
+    filename = sensors_path(workdir)
+    if filename is None:
+        return
+    print(f"run: sensors from {os.path.basename(filename)}")
+    with open(filename, encoding='utf-8-sig') as fp:
+        commands = json.load(fp)
+    if not isinstance(commands, list):
+        raise ValueError(f"{filename}: expected a list of commands")
+    for program in sensors_left_out(workdir, commands):
+        print(f"run: WARNING: sensors.json also starts {program}, which sensors.local.json does not; it will not run")
+    with process_lock:
+        if sensor_processes:
+            raise RuntimeError("Sensor captures are already running")
+        logs : List[str] = []
+        try:
+            for index, command in enumerate(commands):
+                # Argument arrays preserve Windows paths without POSIX shell escaping.
+                args = shlex.split(command, posix=os.name != 'nt') if isinstance(command, str) else command
+                if isinstance(command, str) and os.name == 'nt':
+                    args = [arg[1:-1] if len(arg) >= 2 and arg[0] == arg[-1] and arg[0] in ('"', "'") else arg for arg in args]
+                if not isinstance(args, list) or not args or not all(isinstance(arg, str) for arg in args):
+                    raise ValueError(f"{filename}: command {index + 1} must be a nonempty argument list or command line")
+                # The sensor commands are installed in the same venv as this server, which need not be on PATH.
+                found = shutil.which(args[0]) or shutil.which(args[0], path=os.path.dirname(sys.executable))
+                if not found:
+                    raise FileNotFoundError(f"{filename}: command {index + 1}: {args[0]} not found on PATH or beside {sys.executable}")
+                args = [found] + args[1:]
+                # A capture never overwrites a recording, so one aimed at a file an earlier run
+                # left here would exit at once while the player ran on without it. That happens
+                # when two runs start in the same minute: VRTrun names the working folder by the
+                # minute, and the second run reuses the first one's folder.
+                output = output_argument(args)
+                if output is not None:
+                    target = output if os.path.isabs(output) else os.path.join(workdir, output)
+                    if os.path.exists(target) and os.path.getsize(target) > 0:
+                        raise RuntimeError(f"{target} already holds a recording from an earlier run in this working folder "
+                                           f"(two runs started in the same minute share one); start the run again in the next minute")
+                print(f"run: sensor command={' '.join(args)}")
+                stem = os.path.splitext(os.path.basename(args[0]))[0]
+                log = os.path.join(workdir, f'{stem}-{index + 1}.log')
+                with open(log, 'w') as logfile:
+                    # The capture's stdin is held so that closing it asks it to stop; see stop_sensors.
+                    env = dict(os.environ, VRTSENSORS_STOP_ON_STDIN_EOF='1')
+                    sensor_processes.append(psutil.Popen(args, cwd=workdir, stdin=subprocess.PIPE, stdout=logfile, stderr=subprocess.STDOUT, env=env))
+                logs.append(log)
+            # A capture that is already gone - a bad argument, a malformed participant.json -
+            # would otherwise be noticed only when its file comes back empty.
+            if SENSOR_START_CHECK > 0:
+                time.sleep(SENSOR_START_CHECK)
+            for proc, log in zip(sensor_processes, logs if SENSOR_START_CHECK > 0 else []):
+                if proc.poll() is not None:
+                    with open(log, encoding='utf-8', errors='replace') as fp:
+                        tail = fp.read()[-400:].strip()
+                    raise RuntimeError(f"{os.path.basename(log)}: the capture exited at once (status {proc.returncode}): {tail}")
+        except Exception:
+            stop_sensors()
+            raise
+
+def stop_processes(processes : List[psutil.Popen]) -> None:
+    """Reap captures and their launcher children, including Windows entry-point wrappers."""
+    targets = []
+    for proc in processes:
+        try:
+            targets.extend(proc.children(recursive=True))
+            targets.append(proc)
+        except psutil.NoSuchProcess:
+            pass
+    for proc in targets:
+        try:
+            proc.terminate()
+        except psutil.NoSuchProcess:
+            pass
+    _, alive = psutil.wait_procs(targets, timeout=5)
+    for proc in alive:
+        try:
+            proc.kill()
+        except psutil.NoSuchProcess:
+            pass
+    psutil.wait_procs(alive, timeout=5)
+
+def stop_sensors() -> None:
+    """Reap every capture this server started, and forget them.
+
+    Safe with none running and safe to call twice: it is both the normal end of a run and
+    the cleanup path when starting the captures fails partway through."""
+    global sensor_processes
+    with process_lock:
+        # Ask first: a capture whose stdin closes stops the way Ctrl-C stops it, with the
+        # device released and a final `stopped` record. Whatever is still there after a few
+        # seconds is killed, as before.
+        for proc in sensor_processes:
+            try:
+                if proc.stdin:
+                    proc.stdin.close()
+            except OSError:
+                pass
+        psutil.wait_procs(sensor_processes, timeout=SENSOR_STOP_GRACE)
+        stop_processes(sensor_processes)
+        sensor_processes = []
+
 @app.route("/run", methods=["GET", "POST"])
 def run():
     global process
-    if SETTINGS.workdir == None:
+    workdir = SETTINGS.workdir
+    if workdir == None:
         print("run: start not called")
         return Response("400: run: start not called", status=400)
-    logfile = os.path.join(SETTINGS.workdir, 'unity.log')
+    if not run_lock.acquire(blocking=False):
+        return Response("409: a run is already active", status=409)
+    logfile = os.path.join(workdir, 'unity.log')
     command = [
         SETTINGS.executable,
         "-logFile", logfile
         ]
-    configfile = os.path.join(SETTINGS.workdir, 'config.json')
+    configfile = os.path.join(workdir, 'config.json')
     if os.path.exists(configfile):
         command += ["-vrt-config", configfile]    
     print(f"run: command={' '.join(command)}")
     
-    process = psutil.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    usage_file = os.path.join(SETTINGS.workdir, 'rusage.log')
-    usage_collector = RUsageCollector(usage_file, process)
-    while process.poll() == None:
-        time.sleep(0.1)
-        usage_collector.step()
-    usage_collector.close()
-    stdout_data, stderr_data = process.communicate()
-    process.wait()
-    process = None
+    usage_collector = None
+    try:
+        # A file avoids filling an unread stdout pipe while Unity is running.
+        with tempfile.TemporaryFile() as output:
+            with process_lock:
+                try:
+                    start_sensors(workdir)
+                except Exception as e:
+                    # Before the player: a session without its sensor data is not started at all,
+                    # and VRTrun prints the reason with this role's failure.
+                    print(f"run: sensors did not start: {e}")
+                    return Response(f"500: sensors did not start: {e}", status=500, mimetype="text/plain")
+                process = psutil.Popen(command, stdout=output, stderr=subprocess.STDOUT)
+                player = process
+            usage_file = os.path.join(workdir, 'rusage.log')
+            usage_collector = RUsageCollector(usage_file, player)
+            while player.poll() == None:
+                time.sleep(0.1)
+                usage_collector.step()
+            player.wait()
+            output.seek(0)
+            stdout_data = output.read()
+    finally:
+        try:
+            with process_lock:
+                if process is not None:
+                    stop_processes([process])
+                    process = None
+                stop_sensors()
+            if usage_collector is not None:
+                usage_collector.close()
+        finally:
+            run_lock.release()
     #
     # Find the statsfilename and copy that file to the workdir
     #
-    copy_stats_file(logfile, SETTINGS.workdir)
-    if stderr_data:
-        stdout_data += b"\n" + stderr_data
+    copy_stats_file(logfile, workdir)
     return Response(stdout_data, mimetype="text/plain")
 
 @app.route("/kill", methods=["GET", "POST"])
 def kill():
     global process
-    if process:
-        print("kill")
-        process.kill()
-        return Response("OK", mimetype="text/plain")
-    else:
-        print("kill: no process")
-        return Response("400: kill: no process", status=400)
+    with process_lock:
+        active = process is not None or bool(sensor_processes)
+        if process is not None:
+            stop_processes([process])
+        stop_sensors()
+    return Response("OK" if active else "400: kill: no process", status=200 if active else 400, mimetype="text/plain")
 
 def copy_stats_file(logfile : str, workdir : str):
     # See if we can find the stats file
