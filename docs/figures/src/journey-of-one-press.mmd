@@ -1,0 +1,10 @@
+flowchart TB
+    A["The button pulls I1 low"]:::hardware --> B["Two low samples in a row<br/>at 100 Hz"]:::acquisition
+    B --> C["The recording writes<br/>a press event"]:::acquisition
+    C --> F["The press, in bitalino.jsonl"]:::store
+    C --> U["Unity gets a copy over UDP<br/>and counts the press"]:::unity
+    U --> G["The giant counts a knock"]:::unity
+    U --> L["Unity's own record<br/>of the press, in stats.log"]:::store
+    F --> I["Ingest keeps both records"]:::pipeline
+    L --> I
+    I --> J["combined.json<br/>count presses from the .jsonl one"]:::store

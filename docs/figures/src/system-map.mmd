@@ -1,0 +1,10 @@
+flowchart TB
+    E["EmotiBit<br/>over WiFi"]:::hardware --> O["EmotiBit Oscilloscope<br/>passes it on over LSL"]:::vendor
+    B["BITalino<br/>over Bluetooth"]:::hardware --> P["VRTsensors recording<br/>one per sensor"]:::acquisition
+    O --> P
+    P --> F["Recording file<br/>bitalino.jsonl, emotibit.jsonl"]:::store
+    P --> U["Unity scene<br/>a live copy over UDP"]:::unity
+    U --> L["stats.log"]:::store
+    F --> I["VRTstatistics-ingest<br/>with the sensors step"]:::pipeline
+    L --> I
+    I --> C["combined.json<br/>everything on one clock"]:::store

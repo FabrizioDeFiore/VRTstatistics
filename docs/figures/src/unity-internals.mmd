@@ -1,0 +1,10 @@
+flowchart TB
+    P["VRTsensors recording<br/>on this machine"]:::acquisition --> Q["Receive thread, over UDP<br/>queue of up to 8192 records"]:::unity
+    Q --> D["Main thread<br/>up to 4096 records a frame"]:::unity
+    D --> T["This participant's<br/>channel table"]:::unity
+    T --> A["Summaries each second<br/>and every event"]:::unity
+    A --> L["stats.log"]:::store
+    T --> S["SensorShare sends<br/>snapshots to the others"]:::unity
+    R["Snapshots from<br/>the other participants"]:::vendor --> V["SensorShare keeps one table<br/>per other participant"]:::unity
+    T --> G["A lantern per participant,<br/>the giant reads them all"]:::unity
+    V --> G

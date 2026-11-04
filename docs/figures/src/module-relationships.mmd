@@ -1,0 +1,6 @@
+flowchart TB
+    A["bitalino.py, emotibit.py"]:::acquisition --> R["JSON records<br/>samples and events"]:::store
+    R --> S["SensorAnnotation<br/>in ingest.py"]:::acquisition
+    B["AnnotationStep"]:::pipeline -->|extended by| S
+    N["SessionNormalizer<br/>clock offset per role"]:::pipeline -->|reused by| S
+    S -->|adds rows to| D["DataStore<br/>saved as combined.json"]:::pipeline

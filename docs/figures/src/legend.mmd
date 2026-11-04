@@ -1,0 +1,6 @@
+flowchart LR
+    A["Sensor or computer"]:::hardware ~~~ B["Other software"]:::vendor
+    B ~~~ C["VRTsensors, added"]:::acquisition
+    C ~~~ G["A step you do"]:::action
+    D["VRTstatistics, CWI's"]:::pipeline ~~~ E["Unity"]:::unity
+    E ~~~ F["A file on disk"]:::store

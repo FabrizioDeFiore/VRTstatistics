@@ -1,3 +1,22 @@
+> ## Physiological sensors for VRTstatistics
+>
+> **VRTstatistics now records physiological sensors**: a **BITalino** and an **EmotiBit** (for
+> now). Signals are recorded during a VR2Gather session, sent live into the running
+> scene, and merged into `combined.json` with each participant's data kept separate. The work was
+> done by Fabrizio De Fiore as part of the AMPlify project.
+>
+> ### Start here: [the documentation](docs/README.md)
+>
+> | You are | Start with |
+> |---|---|
+> | A researcher who wants sensor data in a study | [01 Introduction](docs/01-introduction.md), then [02 Installing](docs/02-installing.md) |
+> | A developer building a scene or adding a sensor | [09 Unity](docs/09-unity.md) and [10 Command reference](docs/10-command-reference.md) |
+> | A reviewer at CWI | [12 For reviewers](docs/12-for-reviewers.md): what was added and changed, file by file |
+>
+> Everything below this line is the original VRTstatistics readme.
+
+---
+
 # VRTstatistics - running VR2Gather apps remotely
 
 _VRTStatistics_ helps with automatically running multiple VR2Gather-based application instances, optionally collecting the results and producing graphs or tables of things like bandwidth usage, frames per second, interaction patterns and much more.

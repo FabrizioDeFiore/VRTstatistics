@@ -1,0 +1,8 @@
+flowchart TB
+    S1["1. You start VRTrunserver<br/>on every participant machine"]:::action
+    S1 --> S2["2. You start VRTrun<br/>on your computer"]:::action
+    S2 --> S3["3. Each machine gets its settings,<br/>starts its sensors, then the player"]:::pipeline
+    S3 --> S4["4. The session runs: sensors write<br/>.jsonl files, the player writes stats.log"]:::store
+    S4 --> S5["5. The players close, the sensors stop,<br/>and every file comes back to you"]:::pipeline
+    S5 --> S6["6. You run VRTstatistics-ingest"]:::action
+    S6 --> S7["combined.json"]:::store

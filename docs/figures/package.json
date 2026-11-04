@@ -1,0 +1,5 @@
+{
+  "private": true,
+  "scripts": { "render": "node render.cjs" },
+  "devDependencies": { "mermaid": "11.17.2", "puppeteer": "25.11.0" }
+}

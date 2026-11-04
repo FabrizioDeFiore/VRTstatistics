@@ -1,0 +1,6 @@
+flowchart TB
+    C["Your computer<br/>runs VRTrun"]:::action
+    C --> A["Machine A, role participant1<br/>VRTrunserver, player, EmotiBit"]:::hardware
+    C --> B["Machine B, role participant2<br/>VRTrunserver, player, BITalino"]:::hardware
+    A --- O["VR2Gather orchestrator<br/>joins the players in one session"]:::vendor
+    B --- O

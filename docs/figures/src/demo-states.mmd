@@ -1,0 +1,5 @@
+flowchart TB
+    A["ASLEEP<br/>knocks add up"]:::unity -->|3 knocks| B["AWAKE<br/>calm fills a bar"]:::unity
+    B -->|the bar is full| C["SOOTHED<br/>smile, petals, chime"]:::unity
+    C -->|12 s later, knocks reset| A
+    B -.- N["While awake, calm fills the bar<br/>in about 8 s, faster in the dark.<br/>Movement 0.25+, arousal 0.6+<br/>or tension 0.5+ empties it in 2 s."]:::note
