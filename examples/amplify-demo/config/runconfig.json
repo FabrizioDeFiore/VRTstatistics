@@ -1,0 +1,13 @@
+{
+    "global": {},
+    "machines": [
+        {
+            "role": "participant1",
+            "address": "participant1-pc.local"
+        },
+        {
+            "role": "participant2",
+            "address": "participant2-pc.local"
+        }
+    ]
+}

@@ -1,0 +1,28 @@
+{
+    "configVersion": 20260311,
+    "disableVR": true,
+    "StatisticsConfig": {
+        "interval": 0.2,
+        "outputFile": "stats.log",
+        "outputFileAppend": false
+    },
+    "SensorConfig": {
+        "udpPort": 9010
+    },
+    "AutoStartConfig": {
+        "autoCreateForUser": "",
+        "sessionName": "amplify-sleeping-giant",
+        "sessionScenario": "AMPlify: The Sleeping Giant",
+        "sessionTransportProtocol": "socketio",
+        "autoStartWith": -1,
+        "autoLeaveAfter": 0.0,
+        "autoStopAfterLeave": false,
+        "autoDelay": 1.0,
+        "autoCreate": false,
+        "autoJoin": false,
+        "autoCreateStandalone": false
+    },
+    "RepresentationConfig": {
+        "microphoneName": "Muted"
+    }
+}

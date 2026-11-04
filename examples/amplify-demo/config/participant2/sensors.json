@@ -1,0 +1,3 @@
+[
+    "VRTsensors-bitalino --address COM4 --batch 2 --udp 127.0.0.1:9010 --output bitalino.jsonl --channel A1=acc --channel I1=btn"
+]

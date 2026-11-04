@@ -1,0 +1,9 @@
+{
+    "global": {},
+    "machines": [
+        {
+            "role": "participant1",
+            "address": "localhost"
+        }
+    ]
+}
