@@ -5,3 +5,19 @@ build
 __pycache__
 examples/**/run-*
 .ipynb_checkpoints
+
+# Run output at the repository root, and sensor captures (sensor work)
+run-*/
+sensor-runs/
+*.jsonl
+combined.json
+
+# Figure rendering pulls a local toolchain; the sources and the rendered output are what we keep.
+docs/figures/node_modules/
+docs/figures/package-lock.json
+
+# What is physically plugged into *this* machine. sensors.json beside it is checked in and
+# is the documented default for a role; this file says what is actually attached today and
+# wins over it. Keeping the two apart is what stops one session's wiring being committed over
+# the example, where it would look exactly like the example.
+sensors.local.json
